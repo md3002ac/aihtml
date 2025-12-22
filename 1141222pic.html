@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>圖片翻轉與四方連續捲動</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: black;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        #game-container {
+            position: relative;
+            width: 1200px;
+            height: 600px;
+            margin: auto;
+            top: 50vh;
+            transform: translateY(-50%);
+            overflow: hidden;
+            background-color: #000;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        }
+
+        #background-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .student-name {
+            font-size: 80pt;
+            font-weight: bold;
+            opacity: 0.6;
+            display: flex;
+            gap: 10px;
+            transition: transform 0.05s;
+        }
+
+        .shake {
+            animation: shake 0.1s ease-in-out;
+        }
+
+        @keyframes shake {
+            0% { transform: translate(0, 0); }
+            25% { transform: translate(5px, 5px); }
+            50% { transform: translate(-5px, -5px); }
+            75% { transform: translate(5px, -5px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        #upload-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+
+        .btn {
+            background: #4A90E2;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 20px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            background: #357ABD;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <!-- 背景捲動層 -->
+    <canvas id="background-layer"></canvas>
+    
+    <!-- 文字顯示層 -->
+    <div id="ui-layer">
+        <div id="name-display" class="student-name"></div>
+    </div>
+
+    <!-- 初始載入介面 -->
+    <div id="upload-overlay">
+        <h2 class="text-3xl mb-4 font-bold">圖片四方連續捲動</h2>
+        <input type="file" id="file-input" accept="image/*" class="hidden">
+        <label for="file-input" class="btn">選取並載入圖片檔</label>
+        <div class="mt-6 text-gray-400 text-center leading-relaxed">
+            <p>操作說明：</p>
+            <p>方向鍵：捲動背景圖</p>
+            <p>ESC：結束觀看</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('background-layer');
+    const ctx = canvas.getContext('2d');
+    const nameDisplay = document.getElementById('name-display');
+    const fileInput = document.getElementById('file-input');
+    const uploadOverlay = document.getElementById('upload-overlay');
+
+    let studentName = "";
+    let bgPatternCanvas = null;
+    let bgX = 0;
+    let bgY = 0;
+
+    canvas.width = 1200;
+    canvas.height = 600;
+
+    function getRandomColor() {
+        const h = Math.floor(Math.random() * 360);
+        return `hsla(${h}, 70%, 60%, 1)`;
+    }
+
+    function initStudentName() {
+        studentName = prompt("請輸入學生姓名", "蔡小名") || "蔡小名";
+        nameDisplay.innerHTML = '';
+        [...studentName].forEach(char => {
+            const span = document.createElement('span');
+            span.textContent = char;
+            span.style.color = getRandomColor();
+            nameDisplay.appendChild(span);
+        });
+    }
+
+    function processImages(img) {
+        const w = img.width;
+        const h = img.height;
+
+        // 建立 2x2 的基礎拼接單元
+        // 橫向規律: 1, 2, 1, 2... (原圖, 左右翻轉)
+        // 縱向規律: 1, 3, 1, 3... (原圖, 垂直翻轉)
+        
+        const unitCanvas = document.createElement('canvas');
+        unitCanvas.width = w * 2;
+        unitCanvas.height = h * 2;
+        const uCtx = unitCanvas.getContext('2d');
+
+        // [1] 左上: 原圖
+        uCtx.drawImage(img, 0, 0);
+
+        // [2] 右上: 左右翻轉 (符合 1, 2, 1, 2 橫向規律)
+        uCtx.save();
+        uCtx.translate(w * 2, 0);
+        uCtx.scale(-1, 1);
+        uCtx.drawImage(img, 0, 0);
+        uCtx.restore();
+
+        // [3] 左下: 垂直翻轉 (符合 1, 3, 1, 3 縱向規律)
+        uCtx.save();
+        uCtx.translate(0, h * 2);
+        uCtx.scale(1, -1);
+        uCtx.drawImage(img, 0, 0);
+        uCtx.restore();
+
+        // [4] 右下: 同時左右與垂直翻轉 (維持邊界對接)
+        uCtx.save();
+        uCtx.translate(w * 2, h * 2);
+        uCtx.scale(-1, -1);
+        uCtx.drawImage(img, 0, 0);
+        uCtx.restore();
+
+        bgPatternCanvas = unitCanvas;
+        draw();
+    }
+
+    function draw() {
+        if (!bgPatternCanvas) return;
+
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const pw = bgPatternCanvas.width;
+        const ph = bgPatternCanvas.height;
+
+        // 修正平鋪邏輯，確保無縫捲動
+        // 使用模運算處理負值情況
+        let offsetX = bgX % pw;
+        if (offsetX > 0) offsetX -= pw;
+        
+        let offsetY = bgY % ph;
+        if (offsetY > 0) offsetY -= ph;
+
+        for (let x = offsetX; x < canvas.width; x += pw) {
+            for (let y = offsetY; y < canvas.height; y += ph) {
+                ctx.drawImage(bgPatternCanvas, x, y);
+            }
+        }
+    }
+
+    function triggerShake() {
+        nameDisplay.classList.remove('shake');
+        void nameDisplay.offsetWidth; 
+        nameDisplay.classList.add('shake');
+        
+        // 每次抖動順便更換一下文字顏色增加動態感
+        const spans = nameDisplay.querySelectorAll('span');
+        spans.forEach(span => span.style.color = getRandomColor());
+    }
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+                uploadOverlay.style.display = 'none';
+                initStudentName();
+                processImages(img);
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    window.addEventListener('keydown', (e) => {
+        if (uploadOverlay.style.display !== 'none') return;
+
+        let moved = false;
+        switch(e.key) {
+            case "ArrowUp":
+                bgY += 50; // 背景向下捲
+                moved = true;
+                break;
+            case "ArrowDown":
+                bgY -= 50; // 背景向上捲
+                moved = true;
+                break;
+            case "ArrowLeft":
+                bgX += 50; // 背景向右捲
+                moved = true;
+                break;
+            case "ArrowRight":
+                bgX -= 50; // 背景向左捲
+                moved = true;
+                break;
+            case "Escape":
+                const endBox = document.createElement('div');
+                endBox.style.cssText = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:40px; border-radius:15px; box-shadow:0 0 100px rgba(0,0,0,0.5); font-size:24pt; font-weight:bold; z-index:1000;";
+                endBox.innerText = "觀看結束";
+                document.body.appendChild(endBox);
+                setTimeout(() => location.reload(), 2000);
+                return;
+        }
+
+        if (moved) {
+            e.preventDefault(); // 防止瀏覽器捲動
+            triggerShake();
+            draw();
+        }
+    });
+</script>
+
+</body>
+</html>
