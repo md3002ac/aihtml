@@ -27,7 +27,7 @@
             overflow: hidden;
         }
 
-        /* 捲動容器：底層與上層 */
+        /* 捲動容器層 */
         .scroll-layer {
             position: absolute;
             top: 0;
@@ -57,44 +57,41 @@
         }
 
         .flip-horizontal { transform: scaleX(-1); }
-        
-        /* 圖2與圖4為完全不透明 */
-        .opaque-top { opacity: 1.0; }
 
         /* 固定在中央的姓名：輪廓閃爍效果 */
         #fixed-name-overlay {
             position: absolute;
             top: 50%;
             left: 50%;
-            /* 使用 CSS 變數來動態控制 Y 軸位移，初始為 -50% (置中) */
-            transform: translate(-50%, var(--y-offset, -50%));
+            transform: translate(-50%, -50%);
             font-size: 150px;
             font-weight: 900;
             z-index: 50; /* 夾在 10 與 100 之間 */
             white-space: nowrap;
             pointer-events: none;
-            
-            /* 製作空心輪廓字 */
             color: transparent;
             -webkit-text-stroke: 3px #fff;
-            
             animation: outline-flash 0.1s infinite alternate;
-            transition: transform 0.1s ease-out;
+            transition: top 0.1s ease-out;
         }
 
         @keyframes outline-flash {
-            0% { 
-                -webkit-text-stroke-color: #ff0000;
-                text-shadow: 0 0 10px #ff0000, 0 0 20px #ff0000;
-            }
-            50% {
-                -webkit-text-stroke-color: #00ff00;
-                text-shadow: 0 0 15px #00ff00, 0 0 30px #00ff00;
-            }
-            100% { 
-                -webkit-text-stroke-color: #00ffff;
-                text-shadow: 0 0 20px #00ffff, 0 0 40px #00ffff;
-            }
+            0% { -webkit-text-stroke-color: #ff0000; text-shadow: 0 0 10px #ff0000, 0 0 20px #ff0000; }
+            50% { -webkit-text-stroke-color: #00ff00; text-shadow: 0 0 15px #00ff00, 0 0 30px #00ff00; }
+            100% { -webkit-text-stroke-color: #00ffff; text-shadow: 0 0 20px #00ffff, 0 0 40px #00ffff; }
+        }
+
+        /* UI 指示器 */
+        #ui-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.6);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            z-index: 200;
+            color: #aaa;
         }
 
         /* 設定介面 */
@@ -143,17 +140,16 @@
                     開始播放
                 </button>
             </div>
+            <div class="mt-4 text-xs text-gray-500 text-center">
+                ← →：捲動背景 | ↑ ↓：移動文字 | PgUp/PgDn：透明度
+            </div>
         </div>
     </div>
 
     <div id="game-container">
-        <!-- 底層捲動層 (圖1, 圖3...) -->
+        <div id="ui-status">上層透明度: 100%</div>
         <div id="bottom-layer" class="scroll-layer"></div>
-        
-        <!-- 固定中央姓名層 (輪廓字) -->
         <div id="fixed-name-overlay" style="display: none;"></div>
-        
-        <!-- 上層捲動層 (圖2, 圖4...) -->
         <div id="top-layer" class="scroll-layer"></div>
     </div>
 
@@ -162,14 +158,14 @@
         const topLayer = document.getElementById('top-layer');
         const nameOverlay = document.getElementById('fixed-name-overlay');
         const setupOverlay = document.getElementById('setup-overlay');
+        const statusDisplay = document.getElementById('ui-status');
         const startBtn = document.getElementById('start-btn');
         
-        let img1Src = '';
-        let img2Src = '';
+        let img1Src = '', img2Src = '';
         let scrollX = 0;
-        let nameY = 300; // 初始垂直座標 (600/2)
+        let nameY = 300; 
+        let topOpacity = 100; // 0-100
         const unitWidth = 600;
-        const containerHeight = 600;
 
         startBtn.addEventListener('click', async () => {
             const file1 = document.getElementById('img1-input').files[0];
@@ -217,42 +213,42 @@
                 tUnit.className = 'sprite-unit';
                 const tImg = document.createElement('img');
                 tImg.src = img2Src;
-                tImg.className = 'img-content opaque-top' + (isGroup1 ? '' : ' flip-horizontal');
+                tImg.className = 'img-content' + (isGroup1 ? '' : ' flip-horizontal');
                 tUnit.appendChild(tImg);
                 topLayer.appendChild(tUnit);
             }
-            updateNamePosition();
+            updateUI();
         }
 
-        function updateNamePosition() {
-            // 計算 CSS transform 中的百分比位移
-            // 因為初始 top: 50%, translate -50% 是置中
-            // 我們直接控制 top 像素值或計算 translate 百分比
+        function updateUI() {
             nameOverlay.style.top = nameY + 'px';
+            topLayer.style.opacity = topOpacity / 100;
+            statusDisplay.innerText = `上層透明度: ${topOpacity}%`;
         }
 
         window.addEventListener('keydown', (e) => {
-            // 左右鍵移動背景圖層
-            if (e.key === 'ArrowLeft') {
-                scrollX += 50;
-            } else if (e.key === 'ArrowRight') {
-                scrollX -= 50;
-            }
+            // 防止頁面捲動
+            if(["ArrowUp","ArrowDown","PageUp","PageDown"].includes(e.key)) e.preventDefault();
+
+            // 左右：捲動
+            if (e.key === 'ArrowLeft') scrollX += 50;
+            else if (e.key === 'ArrowRight') scrollX -= 50;
             
-            // 上下鍵移動姓名文字
+            // 上下：移動文字
             if (e.key === 'ArrowUp') {
-                if (nameY > 50) { // 簡易邊界檢查
-                    nameY -= 50;
-                }
-                updateNamePosition();
+                if (nameY > 80) nameY -= 50;
             } else if (e.key === 'ArrowDown') {
-                if (nameY < containerHeight - 50) { // 簡易邊界檢查
-                    nameY += 50;
-                }
-                updateNamePosition();
+                if (nameY < 520) nameY += 50;
+            }
+
+            // PageUp/Down：透明度
+            if (e.key === 'PageUp') {
+                topOpacity = Math.min(100, topOpacity + 10);
+            } else if (e.key === 'PageDown') {
+                topOpacity = Math.max(0, topOpacity - 10);
             }
             
-            // 水平循環捲動
+            // 水平循環
             const cycleWidth = unitWidth * 2;
             if (scrollX > 0) scrollX -= cycleWidth;
             if (scrollX < -cycleWidth) scrollX += cycleWidth;
@@ -260,6 +256,8 @@
             const transformStr = `translateX(${scrollX}px)`;
             bottomLayer.style.transform = transformStr;
             topLayer.style.transform = transformStr;
+            
+            updateUI();
         });
     </script>
 </body>
