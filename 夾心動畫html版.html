@@ -43,23 +43,43 @@
         .bg-segment {
             flex-shrink: 0;
             height: 600px;
-            /* 寬度將在 JS 中動態設定 */
+            position: relative; /* 讓內部的姓名可以定位 */
         }
 
-        #student-name {
+        /* 底圖層 */
+        .base-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* 姓名層 - 夾在中間 */
+        .name-layer {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
             font-size: 80px;
             font-weight: bold;
-            z-index: 100;
+            z-index: 5; /* 高於底圖，低於半透明圖 */
             text-shadow: 3px 3px 10px rgba(0,0,0,0.8);
             pointer-events: none;
             background: linear-gradient(45deg, #f3fb04, #ff00ea, #00ffcc);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             white-space: nowrap;
+        }
+
+        /* 半透明圖層 - 蓋在最上面 */
+        .overlay-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
         }
 
         .overlay {
@@ -111,18 +131,15 @@
             left: 10px;
             color: #888;
             font-size: 14px;
+            z-index: 2000;
         }
     </style>
 </head>
 <body>
 
     <div id="game-container">
-        <!-- 捲動層 -->
+        <!-- 捲動層：內部會包含底圖、姓名、半透明圖 -->
         <div id="scrolling-layer"></div>
-        
-        <!-- 姓名層 -->
-        <div id="student-name"></div>
-
         <div id="instruction">使用鍵盤方向鍵 ← → 控制背景移動</div>
     </div>
 
@@ -150,53 +167,49 @@
         </div>
     </div>
 
-    <!-- 用於翻轉圖片的隱藏畫布 -->
+    <!-- 用於處理圖片的隱藏畫布 -->
     <canvas id="canvas-buffer"></canvas>
 
     <script>
         const scrollLayer = document.getElementById('scrolling-layer');
-        const studentNameDiv = document.getElementById('student-name');
         const setupOverlay = document.getElementById('setup-overlay');
         const canvas = document.getElementById('canvas-buffer');
         const ctx = canvas.getContext('2d');
 
         let offsetX = 0;
         let imagesLoaded = { img1: null, img2: null, img3: null, img4: null };
+        let studentName = "";
 
-        // 監聽開始按鈕
         document.getElementById('start-btn').addEventListener('click', async () => {
             const file1 = document.getElementById('img1-input').files[0];
             const file2 = document.getElementById('img2-input').files[0];
-            const name = document.getElementById('name-input').value;
+            studentName = document.getElementById('name-input').value;
 
             if (!file1 || !file2) {
                 alert('請選取兩張圖片檔案！');
                 return;
             }
-
-            studentNameDiv.textContent = name;
             
-            // 讀取並處理圖片
             try {
+                // 1. 載入原始圖
                 imagesLoaded.img1 = await loadImage(file1);
                 imagesLoaded.img2 = await loadImage(file2);
                 
-                // 翻轉生成 圖3 與 圖4
+                // 2. 翻轉生成 圖3 (圖1反) 與 圖4 (圖2反)
                 imagesLoaded.img3 = flipImage(imagesLoaded.img1);
                 imagesLoaded.img4 = flipImage(imagesLoaded.img2);
 
+                // 3. 建立場景
                 buildBackground();
                 setupOverlay.style.display = 'none';
                 
-                // 啟動鍵盤監聽
                 window.addEventListener('keydown', handleKeyDown);
             } catch (err) {
                 console.error(err);
-                alert('讀取圖片時出錯，請重試。');
+                alert('讀取圖片時出錯。');
             }
         });
 
-        // 讀取檔案轉為 Image 物件
         function loadImage(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -210,7 +223,6 @@
             });
         }
 
-        // 左右翻轉圖片
         function flipImage(originalImg) {
             canvas.width = originalImg.width;
             canvas.height = originalImg.height;
@@ -225,47 +237,57 @@
             return newImg;
         }
 
-        // 拼接背景圖
-        // 拼接順序：圖1, 圖2, 圖3, 圖4 (循環)
         function buildBackground() {
             scrollLayer.innerHTML = '';
-            // 為了實現連續不斷感，我們放多組
-            const sequence = [imagesLoaded.img1, imagesLoaded.img2, imagesLoaded.img3, imagesLoaded.img4];
             
-            // 建立足夠長的背景 (至少 3 倍寬度以防露白)
-            for (let i = 0; i < 12; i++) {
-                const imgSource = sequence[i % 4];
-                const container = document.createElement('div');
-                container.className = 'bg-segment';
+            // 定義循環序列：[底圖, 半透明層]
+            // 圖3是圖1的翻轉，圖4是圖2的翻轉
+            // 組合：(圖1+圖2), (圖3+圖4) ... 依此類推以達成拼接
+            const sequences = [
+                { base: imagesLoaded.img1, top: imagesLoaded.img2 },
+                { base: imagesLoaded.img3, top: imagesLoaded.img4 }
+            ];
+            
+            for (let i = 0; i < 10; i++) {
+                const pair = sequences[i % 2];
+                const segment = document.createElement('div');
+                segment.className = 'bg-segment';
                 
-                // 計算比例以維持 600 高度
-                const ratio = 600 / imgSource.height;
-                const segmentWidth = imgSource.width * ratio;
-                container.style.width = `${segmentWidth}px`;
-                
-                const imgElement = document.createElement('img');
-                imgElement.src = imgSource.src;
-                imgElement.style.height = '600px';
-                imgElement.style.display = 'block';
-                
-                container.appendChild(imgElement);
-                scrollLayer.appendChild(container);
+                const ratio = 600 / pair.base.height;
+                const segmentWidth = pair.base.width * ratio;
+                segment.style.width = `${segmentWidth}px`;
+
+                // A. 放入底圖 (圖1 或 圖3)
+                const baseImg = document.createElement('img');
+                baseImg.src = pair.base.src;
+                baseImg.className = 'base-layer';
+                baseImg.style.width = `${segmentWidth}px`;
+                segment.appendChild(baseImg);
+
+                // B. 放入姓名 (置於中間)
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'name-layer';
+                nameDiv.textContent = studentName;
+                segment.appendChild(nameDiv);
+
+                // C. 放入半透明層 (圖2 或 圖4)
+                const topImg = document.createElement('img');
+                topImg.src = pair.top.src;
+                topImg.className = 'overlay-layer';
+                topImg.style.width = `${segmentWidth}px`;
+                segment.appendChild(topImg);
+
+                scrollLayer.appendChild(segment);
             }
         }
 
-        // 鍵盤控制
         function handleKeyDown(e) {
             const step = 50;
             if (e.key === 'ArrowLeft') {
-                // 左鍵：背景向右移
                 offsetX += step;
             } else if (e.key === 'ArrowRight') {
-                // 右鍵：背景向左移
                 offsetX -= step;
             }
-
-            // 簡單的無限捲動邏輯 (當位移過大時重置)
-            // 在實際應用中會更複雜，此處採用 Transform 位移
             scrollLayer.style.transform = `translateX(${offsetX}px)`;
         }
     </script>
