@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>背景捲動與圖片翻轉工具</title>
+    <title>一甲國小夾心動畫</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             background-color: black;
             color: white;
-            margin: 0;
             overflow: hidden;
+            margin: 0;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -22,293 +22,245 @@
             width: 1200px;
             height: 600px;
             position: relative;
-            overflow: hidden;
-            border: 2px solid #333;
             background-color: #000;
+            border: 4px solid #444;
+            overflow: hidden;
         }
 
-        #canvas-buffer {
-            display: none;
-        }
-
-        /* 捲動層：只包含背景圖片 */
-        #scrolling-layer {
+        /* 捲動容器：底層與上層 */
+        .scroll-layer {
             position: absolute;
             top: 0;
             left: 0;
-            height: 600px;
+            height: 100%;
             display: flex;
-            transition: transform 0.3s ease-out;
-            z-index: 1; /* 最底層 */
+            white-space: nowrap;
+            will-change: transform;
+            font-size: 0;
         }
 
-        /* 覆蓋層：包含翻轉後的半透明圖片 */
-        #overlay-scrolling-layer {
-            position: absolute;
-            top: 0;
-            left: 0;
-            height: 600px;
-            display: flex;
-            transition: transform 0.3s ease-out;
-            z-index: 10; /* 最頂層 */
-            pointer-events: none;
-        }
+        #bottom-layer { z-index: 10; }
+        #top-layer { z-index: 100; pointer-events: none; }
 
-        .bg-segment {
-            flex-shrink: 0;
+        .sprite-unit {
+            display: inline-block;
+            width: 600px;
             height: 600px;
             position: relative;
+            flex-shrink: 0;
         }
 
-        /* 姓名層：固定在畫面中央不動 */
-        #fixed-name-container {
+        .img-content {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .flip-horizontal { transform: scaleX(-1); }
+        
+        /* 圖2與圖4為完全不透明 */
+        .opaque-top { opacity: 1.0; }
+
+        /* 固定在中央的姓名：輪廓閃爍效果 */
+        #fixed-name-overlay {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 1200px;
-            height: 600px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 5; /* 夾在兩個捲動層中間 */
-            pointer-events: none;
-        }
-
-        .name-display {
-            font-size: 100px;
-            font-weight: bold;
-            background: linear-gradient(45deg, #f3fb04, #ff00ea, #00ffcc);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            top: 50%;
+            left: 50%;
+            /* 使用 CSS 變數來動態控制 Y 軸位移，初始為 -50% (置中) */
+            transform: translate(-50%, var(--y-offset, -50%));
+            font-size: 150px;
+            font-weight: 900;
+            z-index: 50; /* 夾在 10 與 100 之間 */
             white-space: nowrap;
-            /* 外輪廓閃爍動畫 */
-            animation: stroke-glow 2s infinite ease-in-out;
+            pointer-events: none;
+            
+            /* 製作空心輪廓字 */
+            color: transparent;
+            -webkit-text-stroke: 3px #fff;
+            
+            animation: outline-flash 0.1s infinite alternate;
+            transition: transform 0.1s ease-out;
         }
 
-        @keyframes stroke-glow {
-            0%, 100% {
-                -webkit-text-stroke: 2px rgba(255, 255, 255, 0.2);
-                filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.1));
+        @keyframes outline-flash {
+            0% { 
+                -webkit-text-stroke-color: #ff0000;
+                text-shadow: 0 0 10px #ff0000, 0 0 20px #ff0000;
             }
             50% {
-                -webkit-text-stroke: 4px rgba(255, 255, 255, 0.8);
-                filter: drop-shadow(0 0 20px rgba(255, 255, 255, 0.6));
+                -webkit-text-stroke-color: #00ff00;
+                text-shadow: 0 0 15px #00ff00, 0 0 30px #00ff00;
+            }
+            100% { 
+                -webkit-text-stroke-color: #00ffff;
+                text-shadow: 0 0 20px #00ffff, 0 0 40px #00ffff;
             }
         }
 
-        .overlay {
+        /* 設定介面 */
+        #setup-overlay {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.9);
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
             display: flex;
-            flex-direction: column;
             justify-content: center;
             align-items: center;
-            z-index: 1000;
         }
 
-        .modal {
+        .input-card {
             background: #1a1a1a;
-            padding: 2.5rem;
-            border-radius: 1rem;
-            border: 1px solid #333;
-            text-align: center;
-            max-width: 500px;
-        }
-
-        input[type="file"], input[type="text"] {
-            margin: 10px 0;
-            display: block;
-            width: 100%;
-            background: #2a2a2a;
-            border: 1px solid #444;
-            color: white;
-            padding: 8px;
-            border-radius: 4px;
-        }
-
-        button {
-            background: #4A90E2;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            margin-top: 20px;
-            font-weight: bold;
-        }
-
-        #instruction {
-            position: absolute;
-            bottom: 15px;
-            left: 15px;
-            color: #666;
-            font-size: 14px;
-            z-index: 2000;
+            padding: 40px;
+            border-radius: 20px;
+            border: 2px solid #3b82f6;
+            width: 450px;
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
         }
     </style>
 </head>
 <body>
 
+    <div id="setup-overlay">
+        <div class="input-card">
+            <h1 class="text-2xl font-bold mb-6 text-center text-blue-400">一甲國小夾心動畫</h1>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm mb-1 text-gray-400">1. 選取底圖 (圖1)</label>
+                    <input type="file" id="img1-input" accept="image/*" class="w-full bg-gray-800 p-2 rounded border border-gray-600 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1 text-gray-400">2. 選取上層圖 (圖2)</label>
+                    <input type="file" id="img2-input" accept="image/*" class="w-full bg-gray-800 p-2 rounded border border-gray-600 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1 text-gray-400">3. 學生姓名</label>
+                    <input type="text" id="name-input" value="五忠趙有錢" class="w-full bg-gray-800 p-2 rounded border border-gray-600 text-white font-bold text-center">
+                </div>
+                <button id="start-btn" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-bold mt-4 transition-colors">
+                    開始播放
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="game-container">
-        <!-- 底圖捲動層 (z-index: 1) -->
-        <div id="scrolling-layer"></div>
-
-        <!-- 固定姓名層 (z-index: 5) -->
-        <div id="fixed-name-container">
-            <div id="name-output" class="name-display"></div>
-        </div>
-
-        <!-- 頂圖捲動層 (z-index: 10) -->
-        <div id="overlay-scrolling-layer"></div>
-
-        <div id="instruction">使用鍵盤方向鍵 ← → 控制背景移動 (姓名固定於中央)</div>
+        <!-- 底層捲動層 (圖1, 圖3...) -->
+        <div id="bottom-layer" class="scroll-layer"></div>
+        
+        <!-- 固定中央姓名層 (輪廓字) -->
+        <div id="fixed-name-overlay" style="display: none;"></div>
+        
+        <!-- 上層捲動層 (圖2, 圖4...) -->
+        <div id="top-layer" class="scroll-layer"></div>
     </div>
-
-    <!-- 初始設定對話框 -->
-    <div id="setup-overlay" class="overlay">
-        <div class="modal">
-            <h2 class="text-2xl mb-6 font-bold text-blue-400">一甲國小夾心動畫設定</h2>
-            
-            <div class="mb-4 text-left">
-                <label class="block mb-1 text-sm text-gray-400">底圖 (圖1):</label>
-                <input type="file" id="img1-input" accept="image/*">
-            </div>
-
-            <div class="mb-4 text-left">
-                <label class="block mb-1 text-sm text-gray-400">半透明圖 (圖2):</label>
-                <input type="file" id="img2-input" accept="image/*">
-            </div>
-
-            <div class="mb-6 text-left">
-                <label class="block mb-1 text-sm text-gray-400">顯示姓名:</label>
-                <input type="text" id="name-input" value="一甲國小夾心動畫">
-            </div>
-
-            <button id="start-btn">確認並開始</button>
-        </div>
-    </div>
-
-    <canvas id="canvas-buffer"></canvas>
 
     <script>
-        const scrollLayer = document.getElementById('scrolling-layer');
-        const overlayScrollLayer = document.getElementById('overlay-scrolling-layer');
-        const nameOutput = document.getElementById('name-output');
+        const bottomLayer = document.getElementById('bottom-layer');
+        const topLayer = document.getElementById('top-layer');
+        const nameOverlay = document.getElementById('fixed-name-overlay');
         const setupOverlay = document.getElementById('setup-overlay');
-        const canvas = document.getElementById('canvas-buffer');
-        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        
+        let img1Src = '';
+        let img2Src = '';
+        let scrollX = 0;
+        let nameY = 300; // 初始垂直座標 (600/2)
+        const unitWidth = 600;
+        const containerHeight = 600;
 
-        let offsetX = 0;
-        let images = { img1: null, img2: null, img3: null, img4: null };
-
-        document.getElementById('start-btn').addEventListener('click', async () => {
+        startBtn.addEventListener('click', async () => {
             const file1 = document.getElementById('img1-input').files[0];
             const file2 = document.getElementById('img2-input').files[0];
-            const nameValue = document.getElementById('name-input').value;
+            const name = document.getElementById('name-input').value;
 
             if (!file1 || !file2) {
-                alert('請選取兩張圖片檔案！');
+                alert("請選取兩張圖片");
                 return;
             }
-            
-            nameOutput.textContent = nameValue;
-            
-            try {
-                // 1. 載入原始圖
-                images.img1 = await loadImage(file1);
-                images.img2 = await loadImage(file2);
-                
-                // 2. 翻轉生成 (圖3是圖1翻轉，圖4是圖2翻轉)
-                images.img3 = flipImage(images.img1);
-                images.img4 = flipImage(images.img2);
 
-                // 3. 建立場景
-                buildBackgrounds();
-                setupOverlay.style.display = 'none';
-                
-                window.addEventListener('keydown', handleKeyDown);
-            } catch (err) {
-                console.error(err);
-                alert('處理圖片時發生錯誤。');
-            }
+            img1Src = await readFileAsDataURL(file1);
+            img2Src = await readFileAsDataURL(file2);
+
+            setupOverlay.style.display = 'none';
+            nameOverlay.innerText = name;
+            nameOverlay.style.display = 'block';
+
+            initAnimation();
         });
 
-        function loadImage(file) {
-            return new Promise((resolve, reject) => {
+        function readFileAsDataURL(file) {
+            return new Promise((resolve) => {
                 const reader = new FileReader();
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => resolve(img);
-                    img.src = e.target.result;
-                };
-                reader.onerror = reject;
+                reader.onload = (e) => resolve(e.target.result);
                 reader.readAsDataURL(file);
             });
         }
 
-        function flipImage(originalImg) {
-            canvas.width = originalImg.width;
-            canvas.height = originalImg.height;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.save();
-            ctx.scale(-1, 1);
-            ctx.drawImage(originalImg, -canvas.width, 0);
-            ctx.restore();
-            
-            const newImg = new Image();
-            newImg.src = canvas.toDataURL();
-            return newImg;
-        }
+        function initAnimation() {
+            bottomLayer.innerHTML = '';
+            topLayer.innerHTML = '';
+            for (let i = -10; i < 10; i++) {
+                const isGroup1 = Math.abs(i) % 2 === 0;
+                
+                const bUnit = document.createElement('div');
+                bUnit.className = 'sprite-unit';
+                const bImg = document.createElement('img');
+                bImg.src = img1Src;
+                bImg.className = 'img-content' + (isGroup1 ? '' : ' flip-horizontal');
+                bUnit.appendChild(bImg);
+                bottomLayer.appendChild(bUnit);
 
-        function createSegment(imgSource, isOverlay = false) {
-            const segment = document.createElement('div');
-            segment.className = 'bg-segment';
-            const ratio = 600 / imgSource.height;
-            const segmentWidth = imgSource.width * ratio;
-            segment.style.width = `${segmentWidth}px`;
-
-            const imgElement = document.createElement('img');
-            imgElement.src = imgSource.src;
-            imgElement.style.height = '600px';
-            imgElement.style.width = `${segmentWidth}px`;
-            if (isOverlay) imgElement.style.opacity = "0.7"; // 半透明效果
-
-            segment.appendChild(imgElement);
-            return segment;
-        }
-
-        function buildBackgrounds() {
-            scrollLayer.innerHTML = '';
-            overlayScrollLayer.innerHTML = '';
-            
-            // 拼接順序
-            const botSequence = [images.img1, images.img2];
-            const topSequence = [images.img3, images.img4];
-            
-            // 建立足夠長的背景
-            for (let i = 0; i < 20; i++) {
-                // 底層拼接 (圖1, 圖2 輪流)
-                scrollLayer.appendChild(createSegment(botSequence[i % 2]));
-                // 頂層拼接 (圖3, 圖4 輪流)
-                overlayScrollLayer.appendChild(createSegment(topSequence[i % 2], true));
+                const tUnit = document.createElement('div');
+                tUnit.className = 'sprite-unit';
+                const tImg = document.createElement('img');
+                tImg.src = img2Src;
+                tImg.className = 'img-content opaque-top' + (isGroup1 ? '' : ' flip-horizontal');
+                tUnit.appendChild(tImg);
+                topLayer.appendChild(tUnit);
             }
+            updateNamePosition();
         }
 
-        function handleKeyDown(e) {
-            const step = 50;
+        function updateNamePosition() {
+            // 計算 CSS transform 中的百分比位移
+            // 因為初始 top: 50%, translate -50% 是置中
+            // 我們直接控制 top 像素值或計算 translate 百分比
+            nameOverlay.style.top = nameY + 'px';
+        }
+
+        window.addEventListener('keydown', (e) => {
+            // 左右鍵移動背景圖層
             if (e.key === 'ArrowLeft') {
-                offsetX += step;
+                scrollX += 50;
             } else if (e.key === 'ArrowRight') {
-                offsetX -= step;
+                scrollX -= 50;
             }
-            // 同步移動兩個捲動層
-            scrollLayer.style.transform = `translateX(${offsetX}px)`;
-            overlayScrollLayer.style.transform = `translateX(${offsetX}px)`;
-        }
+            
+            // 上下鍵移動姓名文字
+            if (e.key === 'ArrowUp') {
+                if (nameY > 50) { // 簡易邊界檢查
+                    nameY -= 50;
+                }
+                updateNamePosition();
+            } else if (e.key === 'ArrowDown') {
+                if (nameY < containerHeight - 50) { // 簡易邊界檢查
+                    nameY += 50;
+                }
+                updateNamePosition();
+            }
+            
+            // 水平循環捲動
+            const cycleWidth = unitWidth * 2;
+            if (scrollX > 0) scrollX -= cycleWidth;
+            if (scrollX < -cycleWidth) scrollX += cycleWidth;
+
+            const transformStr = `translateX(${scrollX}px)`;
+            bottomLayer.style.transform = transformStr;
+            topLayer.style.transform = transformStr;
+        });
     </script>
 </body>
 </html>
