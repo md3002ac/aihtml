@@ -43,11 +43,11 @@
         .bg-segment {
             flex-shrink: 0;
             height: 600px;
-            position: relative; /* 讓內部的姓名可以定位 */
+            position: relative;
         }
 
-        /* 底圖層 */
-        .base-layer {
+        /* 第一層：最底圖 */
+        .layer-bottom {
             position: absolute;
             top: 0;
             left: 0;
@@ -55,31 +55,44 @@
             z-index: 1;
         }
 
-        /* 姓名層 - 夾在中間 */
+        /* 第二層：姓名層 */
         .name-layer {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            font-size: 80px;
+            font-size: 100px;
             font-weight: bold;
-            z-index: 5; /* 高於底圖，低於半透明圖 */
-            text-shadow: 3px 3px 10px rgba(0,0,0,0.8);
+            z-index: 5;
             pointer-events: none;
             background: linear-gradient(45deg, #f3fb04, #ff00ea, #00ffcc);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             white-space: nowrap;
+            /* 外輪廓閃爍動畫 */
+            animation: stroke-glow 2s infinite ease-in-out;
         }
 
-        /* 半透明圖層 - 蓋在最上面 */
-        .overlay-layer {
+        @keyframes stroke-glow {
+            0%, 100% {
+                -webkit-text-stroke: 2px rgba(255, 255, 255, 0.2);
+                filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.1));
+            }
+            50% {
+                -webkit-text-stroke: 4px rgba(255, 255, 255, 0.8);
+                filter: drop-shadow(0 0 20px rgba(255, 255, 255, 0.6));
+            }
+        }
+
+        /* 第三層：蓋在上面的翻轉圖 */
+        .layer-top {
             position: absolute;
             top: 0;
             left: 0;
             height: 100%;
             z-index: 10;
             pointer-events: none;
+            /* 讓上層圖帶點透明度以看到下層與姓名，或視需求設為半透明 */
         }
 
         .overlay {
@@ -88,7 +101,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.85);
+            background: rgba(0,0,0,0.9);
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -97,39 +110,44 @@
         }
 
         .modal {
-            background: #222;
-            padding: 2rem;
+            background: #1a1a1a;
+            padding: 2.5rem;
             border-radius: 1rem;
-            border: 1px solid #444;
+            border: 1px solid #333;
             text-align: center;
             max-width: 500px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
         }
 
         input[type="file"] {
             margin: 10px 0;
             display: block;
             width: 100%;
+            color: #ccc;
         }
 
         button {
             background: #4A90E2;
             color: white;
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
-            border-radius: 5px;
+            border-radius: 6px;
             cursor: pointer;
-            margin-top: 15px;
+            margin-top: 20px;
+            font-weight: bold;
+            transition: all 0.2s;
         }
 
         button:hover {
             background: #357ABD;
+            transform: scale(1.05);
         }
 
         #instruction {
             position: absolute;
-            bottom: 10px;
-            left: 10px;
-            color: #888;
+            bottom: 15px;
+            left: 15px;
+            color: #666;
             font-size: 14px;
             z-index: 2000;
         }
@@ -138,36 +156,34 @@
 <body>
 
     <div id="game-container">
-        <!-- 捲動層：內部會包含底圖、姓名、半透明圖 -->
         <div id="scrolling-layer"></div>
-        <div id="instruction">使用鍵盤方向鍵 ← → 控制背景移動</div>
+        <div id="instruction">使用鍵盤方向鍵 ← → 控制背景移動 (姓名夾在圖層之間並有閃爍外框)</div>
     </div>
 
     <!-- 初始設定對話框 -->
     <div id="setup-overlay" class="overlay">
         <div class="modal">
-            <h2 class="text-2xl mb-4 font-bold">系統設定</h2>
+            <h2 class="text-2xl mb-6 font-bold text-blue-400">背景拼貼系統設定</h2>
             
             <div class="mb-4 text-left">
-                <label class="block mb-1">1. 選取底圖 (圖1):</label>
+                <label class="block mb-1 text-sm text-gray-400">底圖 (圖1):</label>
                 <input type="file" id="img1-input" accept="image/*">
             </div>
 
             <div class="mb-4 text-left">
-                <label class="block mb-1">2. 選取半透明圖 (圖2):</label>
+                <label class="block mb-1 text-sm text-gray-400">半透明圖 (圖2):</label>
                 <input type="file" id="img2-input" accept="image/*">
             </div>
 
-            <div class="mb-4 text-left">
-                <label class="block mb-1">3. 輸入學生姓名:</label>
-                <input type="text" id="name-input" class="w-full p-2 bg-gray-800 border border-gray-600 rounded" value="五忠趙有錢">
+            <div class="mb-6 text-left">
+                <label class="block mb-1 text-sm text-gray-400">學生姓名:</label>
+                <input type="text" id="name-input" class="w-full p-2 bg-gray-900 border border-gray-700 rounded text-white" value="五忠趙有錢">
             </div>
 
-            <button id="start-btn">開始生成背景</button>
+            <button id="start-btn">確認並開始</button>
         </div>
     </div>
 
-    <!-- 用於處理圖片的隱藏畫布 -->
     <canvas id="canvas-buffer"></canvas>
 
     <script>
@@ -177,7 +193,7 @@
         const ctx = canvas.getContext('2d');
 
         let offsetX = 0;
-        let imagesLoaded = { img1: null, img2: null, img3: null, img4: null };
+        let images = { img1: null, img2: null, img3: null, img4: null };
         let studentName = "";
 
         document.getElementById('start-btn').addEventListener('click', async () => {
@@ -192,12 +208,12 @@
             
             try {
                 // 1. 載入原始圖
-                imagesLoaded.img1 = await loadImage(file1);
-                imagesLoaded.img2 = await loadImage(file2);
+                images.img1 = await loadImage(file1);
+                images.img2 = await loadImage(file2);
                 
-                // 2. 翻轉生成 圖3 (圖1反) 與 圖4 (圖2反)
-                imagesLoaded.img3 = flipImage(imagesLoaded.img1);
-                imagesLoaded.img4 = flipImage(imagesLoaded.img2);
+                // 2. 翻轉生成 (圖3是圖1翻轉，圖4是圖2翻轉)
+                images.img3 = flipImage(images.img1);
+                images.img4 = flipImage(images.img2);
 
                 // 3. 建立場景
                 buildBackground();
@@ -206,7 +222,7 @@
                 window.addEventListener('keydown', handleKeyDown);
             } catch (err) {
                 console.error(err);
-                alert('讀取圖片時出錯。');
+                alert('處理圖片時發生錯誤。');
             }
         });
 
@@ -240,41 +256,46 @@
         function buildBackground() {
             scrollLayer.innerHTML = '';
             
-            // 定義循環序列：[底圖, 半透明層]
-            // 圖3是圖1的翻轉，圖4是圖2的翻轉
-            // 組合：(圖1+圖2), (圖3+圖4) ... 依此類推以達成拼接
-            const sequences = [
-                { base: imagesLoaded.img1, top: imagesLoaded.img2 },
-                { base: imagesLoaded.img3, top: imagesLoaded.img4 }
+            // 拼接邏輯：
+            // A區塊：底層圖1 + 中間姓名 + 上層圖3 (圖1翻轉)
+            // B區塊：底層圖2 + 中間姓名 + 上層圖4 (圖2翻轉)
+            const config = [
+                { bot: images.img1, top: images.img3 },
+                { bot: images.img2, top: images.img4 }
             ];
             
-            for (let i = 0; i < 10; i++) {
-                const pair = sequences[i % 2];
+            // 建立多個區塊以實現捲動
+            for (let i = 0; i < 12; i++) {
+                const item = config[i % 2];
                 const segment = document.createElement('div');
                 segment.className = 'bg-segment';
                 
-                const ratio = 600 / pair.base.height;
-                const segmentWidth = pair.base.width * ratio;
+                const ratio = 600 / item.bot.height;
+                const segmentWidth = item.bot.width * ratio;
                 segment.style.width = `${segmentWidth}px`;
 
-                // A. 放入底圖 (圖1 或 圖3)
-                const baseImg = document.createElement('img');
-                baseImg.src = pair.base.src;
-                baseImg.className = 'base-layer';
-                baseImg.style.width = `${segmentWidth}px`;
-                segment.appendChild(baseImg);
+                // 1. 放入底圖 (z-index: 1)
+                const botImg = document.createElement('img');
+                botImg.src = item.bot.src;
+                botImg.className = 'layer-bottom';
+                botImg.style.width = `${segmentWidth}px`;
+                segment.appendChild(botImg);
 
-                // B. 放入姓名 (置於中間)
+                // 2. 放入姓名 (z-index: 5)
                 const nameDiv = document.createElement('div');
                 nameDiv.className = 'name-layer';
                 nameDiv.textContent = studentName;
                 segment.appendChild(nameDiv);
 
-                // C. 放入半透明層 (圖2 或 圖4)
+                // 3. 放入翻轉圖 (z-index: 10)
                 const topImg = document.createElement('img');
-                topImg.src = pair.top.src;
-                topImg.className = 'overlay-layer';
+                topImg.src = item.top.src;
+                topImg.className = 'layer-top';
                 topImg.style.width = `${segmentWidth}px`;
+                // 如果是半透明圖，可以設置 opacity 以利觀察
+                if (i % 2 !== 0) { // 如果是圖2/圖4組合，保持半透明感
+                    topImg.style.opacity = "0.7"; 
+                }
                 segment.appendChild(topImg);
 
                 scrollLayer.appendChild(segment);
