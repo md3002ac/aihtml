@@ -103,7 +103,7 @@
     <div class="overlay" id="screen-name">
         <div class="panel">
             <h1>無人機足球闖關練習</h1>
-            <p>請輸入您的姓名開始測驗</p>
+            <p>請輸入名稱(預設:一甲國小練習生)</p>
             <input type="text" id="input-name" placeholder="輸入姓名" autocomplete="off">
             <br>
             <button onclick="goToCalibration()">下一步</button>
@@ -177,7 +177,7 @@
         scene.add(dirLight);
 
         // 3D 空間參考線 (地面網格)
-        const gridHelper = new THREE.GridHelper(200, 100, 0x333333, 0x1a1a1a);
+        const gridHelper = new THREE.GridHelper(200, 100, 0xff8800, 0x663300);
         scene.add(gridHelper);
 
         // 建立物件群組
@@ -279,7 +279,7 @@
                 const mesh = new THREE.Mesh(geo, mat);
                 mesh.position.set(
                     (Math.random() - 0.5) * 80,
-                    Math.random() * 20 + 2,
+                    Math.random() * 20 + 10,
                     (Math.random() - 0.5) * 80
                 );
                 mesh.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
@@ -372,8 +372,8 @@
 
         // === UI 與流程控制 ===
         function goToCalibration() {
-            const name = document.getElementById('input-name').value.trim();
-            if(!name) { alert("請輸入姓名！"); return; }
+            const name = document.getElementById('input-name').value.trim() || "一甲國小練習生";
+            if(!name) { alert("請輸入姓名！預設(一甲國小練習生)"); return; }
             studentName = name;
             updateNameWalls(studentName); // 更新 3D 空間的姓名牆
             document.getElementById('screen-name').style.display = 'none';
@@ -438,13 +438,16 @@
                     isEmergencyStopON = gp.buttons[1].pressed;
                 }
             } else {
-                rawInputs.pitch = simKeys.w ? -1 : (simKeys.s ? 1 : 0);
-                rawInputs.roll = simKeys.d ? 1 : (simKeys.a ? -1 : 0);
-                rawInputs.yaw = simKeys.right ? 1 : (simKeys.left ? -1 : 0);
+                rawInputs.pitch = simKeys.down ? -1 : (simKeys.up ? 1 : 0);
+		rawInputs.roll  = simKeys.right ? 1 : (simKeys.left ? -1 : 0);
+		rawInputs.yaw = simKeys.d ? 1 : (simKeys.a ? -1 : 0);
                 
-                if(simKeys.up) simThrottleRaw += 0.02;
-                if(simKeys.down) simThrottleRaw -= 0.02;
-                simThrottleRaw = Math.max(-1, Math.min(1, simThrottleRaw));
+                let throttleSpeed = 0.008; // 原本 0.02 → 降低一半
+		if(simKeys.w) simThrottleRaw += throttleSpeed;
+		if(simKeys.s) simThrottleRaw -= throttleSpeed;
+                
+
+		simThrottleRaw = Math.max(-1, Math.min(1, simThrottleRaw));
                 rawInputs.throttle = simThrottleRaw;
             }
 
@@ -494,7 +497,23 @@
             // 1. 無人機控制
             if (engineStarted) {
                 // 油門控制垂直速度 (50% 懸停) - 調降為原來的 25%
-                let targetVy = (rawInputs.throttlePercent - 50) * 0.0375;
+
+
+                let effectiveThrottle = rawInputs.throttlePercent;
+
+		// 🔧 超過 45% 後敏度變 1/5
+		if (effectiveThrottle > 45) {
+		    effectiveThrottle = 45 + (effectiveThrottle - 45) * 0.2;
+		}
+
+
+		// 引擎啟動後，最低 20%
+		if (engineStarted) {
+    			effectiveThrottle = Math.max(20, effectiveThrottle);
+			}
+
+		let targetVy = (effectiveThrottle - 50) * 0.0375;
+
                 pVel.y += (targetVy - pVel.y) * 0.1;
 
                 player.group.rotation.y -= rawInputs.yaw * 0.05;
