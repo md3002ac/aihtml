@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>無人機足球 - 一甲國小校園闖關終極版</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        /* UI 基礎設定 */
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        .panel {
+            background: rgba(10, 10, 12, 0.85);
+            backdrop-filter: blur(8px);
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            pointer-events: auto;
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.3);
+            max-width: 600px;
+        }
+        h1, h2 { color: #10b981; margin-top: 0; }
+        input[type="text"] {
+            width: 80%; padding: 10px; font-size: 18px; margin: 15px 0;
+            border: 1px solid #10b981; background: #222; color: #fff;
+            border-radius: 5px; text-align: center;
+        }
+        button {
+            background: #10b981; color: #fff; border: none;
+            padding: 12px 24px; font-size: 18px; font-weight: bold;
+            border-radius: 6px; cursor: pointer; transition: 0.2s;
+            margin-top: 10px;
+        }
+        button:hover { background: #059669; box-shadow: 0 0 10px #10b981; }
+        
+        /* 測試畫面狀態條 */
+        .axis-row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; font-size: 14px;}
+        progress { width: 60%; height: 20px; accent-color: #10b981; }
+        .tips { color: #aaa; font-size: 14px; margin-top: 20px; text-align: left; line-height: 1.5;}
+        
+        /* 遊戲內 HUD */
+        #hud {
+            position: absolute; top: 15px; left: 15px; right: 15px;
+            display: flex; justify-content: space-between;
+            font-size: 20px; font-weight: bold; text-shadow: 2px 2px 4px #000;
+            z-index: 5; opacity: 0; transition: opacity 0.5s;
+        }
+        .hud-box {
+            background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981;
+            padding: 8px 20px; border-radius: 8px; backdrop-filter: blur(2px);
+        }
+        
+        /* 閃爍特效 */
+        #flash-fx {
+            position: absolute; top:0; left:0; width:100%; height:100%;
+            background: #fff; opacity: 0; pointer-events: none; z-index: 20;
+            transition: opacity 0.1s;
+        }
+        #engine-warning {
+            position: absolute; top: 20%; left: 50%; transform: translateX(-50%);
+            color: #ff0044; font-size: 24px; font-weight: bold;
+            background: rgba(0,0,0,0.8); padding: 15px 30px; border-radius: 8px;
+            border: 2px solid #ff0044; display: none; z-index: 6;
+            animation: pulse 1s infinite;
+            text-align: center;
+        }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+    </style>
+    <!-- 引入 Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <!-- 遊戲 UI 疊層 -->
+    <div id="flash-fx"></div>
+    
+    <div id="hud">
+        <div class="hud-box" id="hud-name">選手: ---</div>
+        <div class="hud-box" id="hud-score">得分: 0 / 50</div>
+        <div class="hud-box" id="hud-time">時間: 03:00</div>
+        <div class="hud-box" id="hud-throttle">油門: 0%</div>
+        <div class="hud-box" id="hud-alt">高度: 0.0m</div>
+    </div>
+
+    <div id="engine-warning">請將緊急停止 (Btn 1 / 空白鍵) <br>撥至 OFF 以啟動引擎並開始計時</div>
+
+    <div class="overlay" id="screen-name">
+        <div class="panel">
+            <h1>校園無人機尋標闖關</h1>
+            <p>請輸入名稱 (預設：一甲國小練習生)</p>
+            <input type="text" id="input-name" placeholder="輸入姓名" autocomplete="off">
+            <br>
+            <button onclick="goToCalibration()">下一步</button>
+        </div>
+    </div>
+
+    <div class="overlay" id="screen-calibration" style="display: none;">
+        <div class="panel" style="width: 500px;">
+            <h2>遙控器訊號測試 (TW10)</h2>
+            <p id="gp-status" style="color:#00ff88;">未偵測到遙控器 (支援鍵盤 WASD/方向鍵/空白鍵)</p>
+            <div class="axis-row"><span>左移/右移 (Roll)</span><progress id="prog-ax0" value="50" max="100"></progress></div>
+            <div class="axis-row"><span>前進/後退 (Pitch)</span><progress id="prog-ax1" value="50" max="100"></progress></div>
+            <div class="axis-row"><span>左轉/右轉 (Yaw)</span><progress id="prog-ax5" value="50" max="100"></progress></div>
+            <div class="axis-row"><span>油門控制 (Thr)</span><progress id="prog-ax6" value="0" max="100"></progress></div>
+            <div class="axis-row">
+                <span>緊急停止 (Btn 1 / 空白鍵)</span>
+                <span id="prog-btn1" style="color:#ff0044; font-weight:bold; font-size:20px;">ON</span>
+            </div>
+            
+            <div class="tips">
+                ⚠️ 提示：<br>
+                1. 請將各搖桿撥動 3 次以上到底以完成校正。<br>
+                2. 請將緊急停止下拉(ON)，油門拉到最低，準備完成後點擊下一步。<br>
+                3. 目標：在 3 分鐘內，於一甲國小校園內穿梭，收集 50 個得分目標框！
+            </div>
+            <button onclick="goToReady()">進入校園</button>
+        </div>
+    </div>
+
+    <div class="overlay" id="screen-gameover" style="display: none;">
+        <div class="panel">
+            <h1 id="gameover-title">時間到！測驗結束</h1>
+            <h2 id="final-name">選手: </h2>
+            <h1 id="final-score" style="font-size: 48px; color: #fff;">總分: 0</h1>
+            <button onclick="location.reload()">重新開始</button>
+        </div>
+    </div>
+
+    <script>
+        // === 系統變數 ===
+        let studentName = "";
+        let gameState = "NAME"; // NAME, CALIB, READY, PLAYING, GAMEOVER
+        let score = 0;
+        const totalHoops = 50;
+        let timeLeft = 180; // 3分鐘
+        let startTime = 0;
+        let shakeTime = 0;
+        
+        // 遙控器狀態
+        let engineStarted = false;
+        let isEmergencyStopON = true;
+        let rawInputs = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
+        let throttleMin = 0, throttleMax = -0.5;
+        let simKeys = { w:false, a:false, s:false, d:false, up:false, down:false, left:false, right:false, space:false };
+
+        // === Three.js 核心設定 ===
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // 天空藍
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.003); // 增加一點霧氣提升空間感
+        
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        // === 燈光系統 (融合 b.html 的高質感光影) ===
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
+        scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xfffaed, 0.85);
+        sunLight.position.set(200, 150, 120);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 0.5;
+        sunLight.shadow.camera.far = 500;
+        sunLight.shadow.camera.left = -150;
+        sunLight.shadow.camera.right = 150;
+        sunLight.shadow.camera.top = 150;
+        sunLight.shadow.camera.bottom = -150;
+        scene.add(sunLight);
+        const fillLight = new THREE.DirectionalLight(0x00f5ff, 0.25);
+        fillLight.position.set(-100, 80, -100);
+        scene.add(fillLight);
+
+        // 碰撞檢測陣列
+        let obstacleMeshes = []; 
+        let obstacleBoxes = []; // 存放 BoundingBox 以供高效能碰撞計算
+        let activeHoops = [];
+        let nameWalls = [];
+
+        // === 無人機生成 ===
+        function createDrone(isPlayer) {
+            const group = new THREE.Group();
+            const radius = 0.5; // 碰撞半徑稍縮小，以利穿梭走廊
+
+            const coreGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.1, 16);
+            const coreMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+            const core = new THREE.Mesh(coreGeo, coreMat);
+            core.castShadow = true;
+            group.add(core);
+
+            const cageMat = new THREE.MeshStandardMaterial({
+                color: isPlayer ? 0xff6600 : 0x555555,
+                wireframe: true, transparent: true, opacity: 0.8,
+                roughness: 0.3, metalness: 0.5
+            });
+            const cage = new THREE.Mesh(new THREE.IcosahedronGeometry(radius, 1), cageMat);
+            group.add(cage);
+
+            const ringMat = new THREE.MeshStandardMaterial({ color: isPlayer ? 0xffffff : 0xaaaaaa });
+            const ringGeo = new THREE.TorusGeometry(radius, 0.02, 8, 32);
+            const ringX = new THREE.Mesh(ringGeo, ringMat); ringX.rotation.y = Math.PI/2;
+            const ringY = new THREE.Mesh(ringGeo, ringMat); ringY.rotation.x = Math.PI/2;
+            const ringZ = new THREE.Mesh(ringGeo, ringMat);
+            group.add(ringX, ringY, ringZ);
+
+            const props = [];
+            const propGeo = new THREE.BoxGeometry(0.3, 0.01, 0.04);
+            const propMat = new THREE.MeshBasicMaterial({ color: 0xaaaaaa });
+            for(let i=0; i<4; i++) {
+                const prop = new THREE.Mesh(propGeo, propMat);
+                prop.position.set((i%2===0?1:-1)*0.25, 0.05, (i<2?1:-1)*0.25);
+                group.add(prop);
+                props.push(prop);
+            }
+
+            const frontColor = isPlayer ? 0x0044ff : 0xffff00;
+            const frontLight = new THREE.PointLight(frontColor, 2, 4);
+            frontLight.position.set(0, 0, -radius);
+            group.add(frontLight);
+            
+            const ledGeo = new THREE.SphereGeometry(0.05, 8, 8);
+            const frontLedMesh = new THREE.Mesh(ledGeo, new THREE.MeshBasicMaterial({color: frontColor}));
+            frontLedMesh.position.set(0, 0, -radius);
+            group.add(frontLedMesh);
+
+            const rearLight = new THREE.PointLight(0xff0000, 2, 4);
+            rearLight.position.set(0, 0, radius);
+            group.add(rearLight);
+            
+            const rearLedMesh = new THREE.Mesh(ledGeo, new THREE.MeshBasicMaterial({color: 0xff0000}));
+            rearLedMesh.position.set(0, 0, radius);
+            group.add(rearLedMesh);
+
+            return { group, props, frontLight, rearLight, frontLedMesh, rearLedMesh, radius };
+        }
+
+        // 實例化玩家
+        const player = createDrone(true);
+        // 生成於跑道中央 (依據校園座標系統)
+        player.group.position.set(95.5, 2, 46.5);
+        player.group.rotation.y = Math.PI / 2; // 面向西側校園
+        let pVel = new THREE.Vector3();
+        scene.add(player.group);
+
+        // 實例化 AI 無人機 (作為干擾物)
+        const ai = createDrone(false);
+        ai.group.position.set(66, 10, 64);
+        let aiTarget = new THREE.Vector3();
+        scene.add(ai.group);
+
+        // === 構建校園建模 (移植自 b.html) ===
+        function buildSchoolCampus() {
+            // 1. 純黑質地底座校地：(0,0) 到 (132,128)
+            const groundGeometry = new THREE.BoxGeometry(132, 0.4, 128);
+            const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x050608, roughness: 0.9 });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.position.set(66, -0.2, 64);
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            // 網格輔助
+            const gridHelper = new THREE.GridHelper(260, 52, 0x10b981, 0x1e293b);
+            gridHelper.position.set(66, 0.01, 64);
+            scene.add(gridHelper);
+
+            // 輔助函式：產生方塊並加入碰撞陣列
+            function addBox(x1, y1, z1, x2, y2, z2, color) {
+                const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+                const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+                const minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+                const w = maxX - minX, h = maxZ - minZ, d = maxY - minY;
+
+                const geometry = new THREE.BoxGeometry(w, h, d);
+                const material = new THREE.MeshStandardMaterial({ color: color, roughness: 0.5 });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.position.set(minX + w/2, minZ + h/2, 128 - (minY + d/2));
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                scene.add(mesh);
+                obstacleMeshes.push(mesh);
+                return mesh;
+            }
+
+            function addDoubleSlopedRoof(x1, y1, z1, x2, y2, z2, color) {
+                const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+                const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+                const minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+                const w = maxX - minX, h = maxZ - minZ, midX = minX + w/2;
+
+                const geom = new THREE.BufferGeometry();
+                const v_SE = [minX, minZ, 128 - minY], v_NE = [maxX, minZ, 128 - minY];
+                const v_SW = [minX, minZ, 128 - maxY], v_NW = [maxX, minZ, 128 - maxY];
+                const v_RidgeE = [midX, maxZ, 128 - minY], v_RidgeW = [midX, maxZ, 128 - maxY];
+
+                const vertices = new Float32Array([
+                    ...v_SE, ...v_RidgeE, ...v_RidgeW, ...v_SE, ...v_RidgeW, ...v_SW,
+                    ...v_NE, ...v_RidgeW, ...v_RidgeE, ...v_NE, ...v_NW, ...v_RidgeW,
+                    ...v_SE, ...v_NE, ...v_RidgeE, ...v_SW, ...v_RidgeW, ...v_NW
+                ]);
+                geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                geom.computeVertexNormals();
+                const mat = new THREE.MeshStandardMaterial({ color: color, side: THREE.DoubleSide });
+                const mesh = new THREE.Mesh(geom, mat);
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                scene.add(mesh);
+                obstacleMeshes.push(mesh);
+            }
+
+            function addSingleSlopedRoof(x1, y1, z1, x2, y2, z2, slopeDir, color) {
+                const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+                const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+                const minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+                let h_SE, h_NE, h_SW, h_NW;
+
+                if (slopeDir === '-X') { h_SE=minZ; h_SW=minZ; h_NE=maxZ; h_NW=maxZ; }
+                else if (slopeDir === '+X') { h_SE=maxZ; h_SW=maxZ; h_NE=minZ; h_NW=minZ; }
+                else if (slopeDir === '-Y') { h_SE=minZ; h_NE=minZ; h_SW=maxZ; h_NW=maxZ; }
+                else { h_SE=maxZ; h_NE=maxZ; h_SW=minZ; h_NW=minZ; }
+
+                const geom = new THREE.BufferGeometry();
+                const v_SE = [minX, h_SE, 128 - minY], v_NE = [maxX, h_NE, 128 - minY];
+                const v_SW = [minX, h_SW, 128 - maxY], v_NW = [maxX, h_NW, 128 - maxY];
+                const vertices = new Float32Array([...v_SE, ...v_NE, ...v_NW, ...v_SE, ...v_NW, ...v_SW]);
+                geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                geom.computeVertexNormals();
+                const mat = new THREE.MeshStandardMaterial({ color: color, side: THREE.DoubleSide });
+                const mesh = new THREE.Mesh(geom, mat);
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                scene.add(mesh);
+                obstacleMeshes.push(mesh);
+            }
+
+            // --- 操場跑道 ---
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#111827'; ctx.fillRect(0, 0, 512, 1024);
+            const cx = 256, cyTop = 256, cyBottom = 1024 - 256;
+            ctx.fillStyle = '#b91c1c';
+            ctx.beginPath(); ctx.arc(cx, cyTop, 220, Math.PI, 0); ctx.lineTo(cx + 220, cyBottom); ctx.arc(cx, cyBottom, 220, 0, Math.PI); ctx.lineTo(cx - 220, cyTop); ctx.fill();
+            ctx.fillStyle = '#065f46';
+            ctx.beginPath(); ctx.arc(cx, cyTop, 130, Math.PI, 0); ctx.lineTo(cx + 130, cyBottom); ctx.arc(cx, cyBottom, 130, 0, Math.PI); ctx.lineTo(cx - 130, cyTop); ctx.fill();
+            ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 4;
+            for (let i = 0; i <= 5; i++) {
+                const r = 130 + i * 18;
+                ctx.beginPath(); ctx.arc(cx, cyTop, r, Math.PI, 0); ctx.lineTo(cx + r, cyBottom); ctx.arc(cx, cyBottom, r, 0, Math.PI); ctx.lineTo(cx - r, cyTop); ctx.stroke();
+            }
+            const trackMesh = new THREE.Mesh(new THREE.PlaneGeometry(41, 87), new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(canvas), roughness: 0.7 }));
+            trackMesh.rotation.x = -Math.PI / 2;
+            trackMesh.position.set(95.5, 0.02, 46.5);
+            trackMesh.receiveShadow = true;
+            scene.add(trackMesh); // 地板不加入碰撞
+
+            // --- 圍牆 ---
+            const barGeom = new THREE.CylinderGeometry(0.04, 0.04, 1.5, 6);
+            const railGeom = new THREE.BoxGeometry(1.0, 0.05, 0.05);
+            const fenceMat = new THREE.MeshStandardMaterial({ color: 0x475569 });
+            const fenceGroup = new THREE.Group();
+            for (let x = 0; x <= 132; x+=2) {
+                if (x >= 82 && x <= 95) continue; // 大門
+                let b = new THREE.Mesh(barGeom, fenceMat); b.position.set(x, 0.75, 128); fenceGroup.add(b);
+            }
+            for (let x = 0; x <= 132; x+=2) {
+                let b = new THREE.Mesh(barGeom, fenceMat); b.position.set(x, 0.75, 0); fenceGroup.add(b);
+            }
+            for (let y = 0; y <= 128; y+=2) {
+                if (y >= 23 && y <= 29) continue; // 側門
+                let b = new THREE.Mesh(barGeom, fenceMat); b.position.set(0, 0.75, 128 - y); fenceGroup.add(b);
+            }
+            for (let y = 0; y <= 128; y+=2) {
+                let b = new THREE.Mesh(barGeom, fenceMat); b.position.set(132, 0.75, 128 - y); fenceGroup.add(b);
+            }
+            scene.add(fenceGroup);
+            
+            // 四周無形空氣牆 (防止飛出校園)
+            addBox(-1, -10, 0, 0, 138, 50, 0x000000).visible = false; // 左
+            addBox(132, -10, 0, 133, 138, 50, 0x000000).visible = false; // 右
+            addBox(-1, -1, 0, 133, 0, 50, 0x000000).visible = false; // 後
+            addBox(-1, 128, 0, 133, 129, 50, 0x000000).visible = false; // 前
+            addBox(0, 0, 50, 132, 128, 51, 0x000000).visible = false; // 天花板
+
+            // --- 綠地與樹木 ---
+            addBox(1, 1, 0, 44, 22, 0.1, 0x14532d);
+            const trunkGeom = new THREE.CylinderGeometry(0.15, 0.25, 3, 8);
+            const leaveGeom = new THREE.SphereGeometry(1.2, 8, 8);
+            const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c4033 });
+            const leaveMat = new THREE.MeshStandardMaterial({ color: 0x166534 });
+            for (let i = 0; i < 20; i++) {
+                const rx = 5 + Math.random() * 37, ry = 4 + Math.random() * 15;
+                const trunk = new THREE.Mesh(trunkGeom, trunkMat); trunk.position.set(rx, 1.5, 128 - ry);
+                const leaves = new THREE.Mesh(leaveGeom, leaveMat); leaves.position.set(rx, 3.2, 128 - ry);
+                scene.add(trunk); scene.add(leaves);
+                obstacleMeshes.push(trunk, leaves);
+            }
+
+            // --- 建築群 ---
+            addBox(82, 0, 0, 83, 2, 2.5, 0x475569); addBox(94, 0, 0, 95, 2, 2.5, 0x475569); // 校門
+            addBox(82, 0, 2.2, 95, 2, 2.5, 0x1e293b);
+            addBox(0, 23, 0, 1, 24, 2.5, 0x475569); addBox(0, 28, 0, 1, 29, 2.5, 0x475569); // 側門
+            addBox(0, 23, 2.2, 1, 29, 2.5, 0x1e293b);
+            
+            addSingleSlopedRoof(1, 31, 2.5, 6, 94, 2.8, '-X', 0x334155); // 教師車棚
+
+            // 紅樓 & 思源樓
+            addBox(26, 37, 0, 37, 69, 10, 0x7f1d1d);
+            addBox(37, 37, 0, 39, 69, 10, 0x1e293b); // 長廊
+            addDoubleSlopedRoof(26, 37, 10, 39, 69, 12, 0xb91c1c);
+            
+            addBox(26, 72, 0, 37, 104, 10, 0xb45309); // 思源樓
+            addBox(37, 72, 0, 39, 104, 10, 0x334155);
+            addBox(29.5, 72, 5, 35.5, 77, 6, 0x78350f); // 舞台
+            addDoubleSlopedRoof(26, 72, 10, 39, 104, 12, 0x991b1b);
+
+            // 南北風雨球場
+            addBox(10, 106, 0, 40, 123, 0.1, 0x0f172a);
+            const courtRoof = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 17, 16, 1, false, 0, Math.PI), new THREE.MeshStandardMaterial({ color: 0x0284c7 }));
+            courtRoof.position.set(25, 10, 128 - 114.5); courtRoof.rotation.z = Math.PI/2; courtRoof.rotation.x = Math.PI;
+            scene.add(courtRoof); obstacleMeshes.push(courtRoof);
+            
+            addBox(119, 91, 0, 130, 123, 0.1, 0x065f46); // 北風雨
+            addDoubleSlopedRoof(119, 91, 10, 130, 123, 12.5, 0x064e3b);
+
+            // 南棟 & 廚房 & 北棟
+            addBox(53, 16, 0, 61, 32, 10, 0x0f766e); addBox(61, 16, 0, 63, 32, 10, 0x1e293b); addDoubleSlopedRoof(53, 16, 10, 63, 32, 12, 0x991b1b);
+            addBox(45, 63, 0, 61, 79, 10, 0x047857); addBox(61, 63, 0, 63, 79, 10, 0x1e293b); addDoubleSlopedRoof(45, 63, 10, 63, 79, 12, 0x991b1b);
+            addBox(45, 81, 0, 65, 100, 5, 0xf1f5f9); // 廚房
+            
+            addBox(123, 11, 0, 130, 32, 10, 0x312e81); addBox(121, 11, 0, 123, 32, 10, 0x1e293b); addDoubleSlopedRoof(121, 11, 10, 130, 32, 12, 0x991b1b);
+            addBox(123, 37, 0, 130, 90, 10, 0x1e1b4b); addBox(121, 37, 0, 123, 90, 10, 0x1e293b); addDoubleSlopedRoof(121, 37, 10, 130, 90, 12, 0x991b1b);
+
+            addBox(73, 1, 0, 79, 6, 5, 0x0d9488); addDoubleSlopedRoof(73, 1, 5, 79, 6, 6.2, 0x115e59); // 警衛室
+            addDoubleSlopedRoof(64, 33, 10, 119, 36, 11.5, 0x475569); // 長廊屋頂
+            
+            // 電視看板
+            addBox(75, 128, 10, 116, 130, 40, 0x022c22);
+            
+            // == 建立碰撞包圍盒 BoundingBoxes (高效能) ==
+            obstacleMeshes.forEach(mesh => {
+                mesh.updateMatrixWorld(true);
+                let box = new THREE.Box3().setFromObject(mesh);
+                obstacleBoxes.push(box);
+            });
+        }
+        buildSchoolCampus();
+
+        // 浮空姓名產生
+        function updateNameWalls(name) {
+            nameWalls.forEach(wall => scene.remove(wall));
+            nameWalls = [];
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            const gradient = ctx.createLinearGradient(0, 0, 1024, 0);
+            gradient.addColorStop(0, '#10b981'); gradient.addColorStop(0.5, '#00ff88'); gradient.addColorStop(1, '#0088ff');
+            ctx.fillStyle = gradient;
+            ctx.font = "bold 100px 'Segoe UI', Arial";
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(name + " 的闖關挑戰", 512, 128);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const wallMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false });
+            const wallGeo = new THREE.PlaneGeometry(80, 20);
+
+            // 在校園上空四面展示
+            const positions = [
+                { pos: [66, 30, 10], rot: [0, 0, 0] },
+                { pos: [66, 30, 118], rot: [0, Math.PI, 0] },
+                { pos: [10, 30, 64], rot: [0, Math.PI/2, 0] },
+                { pos: [122, 30, 64], rot: [0, -Math.PI/2, 0] }
+            ];
+
+            positions.forEach(p => {
+                const wall = new THREE.Mesh(wallGeo, wallMat);
+                wall.position.set(...p.pos);
+                wall.rotation.set(...p.rot);
+                scene.add(wall);
+                nameWalls.push(wall);
+            });
+        }
+
+        // === 隨機生成 50 個得分目標框 ===
+        function spawnHoops() {
+            activeHoops.forEach(h => scene.remove(h.mesh));
+            activeHoops = [];
+            
+            const r = 2.0; // 框的半徑
+            const tube = 0.25;
+            const geo = new THREE.TorusGeometry(r, tube, 16, 32);
+            
+            for(let i=0; i<totalHoops; i++) {
+                const mat = new THREE.MeshStandardMaterial({ color: 0xff0044, roughness: 0.2, metalness: 0.8, emissive: 0x440011 });
+                const mesh = new THREE.Mesh(geo, mat);
+                
+                // 散佈在校園範圍 (X: 10~120, Z: 10~110, Y高度: 3~15)
+                mesh.position.set(
+                    10 + Math.random() * 110,
+                    3 + Math.random() * 12,
+                    10 + Math.random() * 100
+                );
+                // 隨機轉向
+                mesh.rotation.y = Math.random() * Math.PI;
+                scene.add(mesh);
+
+                const normal = new THREE.Vector3(0, 0, 1).applyEuler(mesh.rotation).normalize();
+                activeHoops.push({ mesh, radius: r, tube: tube, normal, prevDot: undefined });
+            }
+        }
+
+        // === UI 與流程控制 ===
+        function goToCalibration() {
+            const name = document.getElementById('input-name').value.trim() || "一甲國小練習生";
+            studentName = name;
+            updateNameWalls(studentName); 
+            document.getElementById('screen-name').style.display = 'none';
+            document.getElementById('screen-calibration').style.display = 'flex';
+            gameState = "CALIB";
+        }
+
+        function goToReady() {
+            document.getElementById('screen-calibration').style.display = 'none';
+            document.getElementById('engine-warning').style.display = 'block';
+            document.getElementById('hud').style.opacity = 1;
+            document.getElementById('hud-name').innerText = "選手: " + studentName;
+            spawnHoops(); // 佈置校園目標框
+            gameState = "READY";
+        }
+
+        function triggerFlash() {
+            const fx = document.getElementById('flash-fx');
+            fx.style.opacity = 1;
+            setTimeout(() => { fx.style.opacity = 0; }, 150);
+        }
+
+        // === 輸入處理 (Gamepad & Keyboard) ===
+        window.addEventListener('keydown', e => {
+            if(e.key.toLowerCase()==='w') simKeys.w = true;
+            if(e.key.toLowerCase()==='s') simKeys.s = true;
+            if(e.key.toLowerCase()==='a') simKeys.a = true;
+            if(e.key.toLowerCase()==='d') simKeys.d = true;
+            if(e.key==='ArrowUp') simKeys.up = true;
+            if(e.key==='ArrowDown') simKeys.down = true;
+            if(e.key==='ArrowLeft') simKeys.left = true;
+            if(e.key==='ArrowRight') simKeys.right = true;
+            if(e.code==='Space') simKeys.space = true;
+        });
+        window.addEventListener('keyup', e => {
+            if(e.key.toLowerCase()==='w') simKeys.w = false;
+            if(e.key.toLowerCase()==='s') simKeys.s = false;
+            if(e.key.toLowerCase()==='a') simKeys.a = false;
+            if(e.key.toLowerCase()==='d') simKeys.d = false;
+            if(e.key==='ArrowUp') simKeys.up = false;
+            if(e.key==='ArrowDown') simKeys.down = false;
+            if(e.key==='ArrowLeft') simKeys.left = false;
+            if(e.key==='ArrowRight') simKeys.right = false;
+            if(e.code==='Space') {
+                simKeys.space = false;
+                isEmergencyStopON = !isEmergencyStopON;
+            }
+        });
+
+        let simThrottleRaw = -1;
+
+        function updateInputs() {
+            let gp = navigator.getGamepads()[0];
+            
+            if (gp) {
+                document.getElementById('gp-status').innerText = gp.id;
+                rawInputs.roll = gp.axes[0] || 0;
+                rawInputs.pitch = gp.axes[1] || 0;
+                rawInputs.yaw = gp.axes[5] || 0;
+                rawInputs.throttle = gp.axes[6] || 0;
+                
+                if(gp.buttons[1]) isEmergencyStopON = gp.buttons[1].pressed;
+            } else {
+                rawInputs.pitch = simKeys.down ? -1 : (simKeys.up ? 1 : 0);
+                rawInputs.roll  = simKeys.right ? 1 : (simKeys.left ? -1 : 0);
+                rawInputs.yaw = simKeys.d ? 1 : (simKeys.a ? -1 : 0);
+                
+                let throttleSpeed = 0.008;
+                if(simKeys.w) simThrottleRaw += throttleSpeed;
+                if(simKeys.s) simThrottleRaw -= throttleSpeed;
+                simThrottleRaw = Math.max(-1, Math.min(1, simThrottleRaw));
+                rawInputs.throttle = simThrottleRaw;
+            }
+
+            if (rawInputs.throttle < throttleMin) throttleMin = rawInputs.throttle;
+            if (rawInputs.throttle > throttleMax) throttleMax = rawInputs.throttle;
+            
+            let tRange = throttleMax - throttleMin;
+            if (tRange < 0.1) tRange = 1;
+            
+            let throttlePercent = ((rawInputs.throttle - throttleMin) / tRange) * 100;
+            throttlePercent = Math.max(0, Math.min(100, throttlePercent));
+            rawInputs.throttlePercent = throttlePercent;
+
+            if (gameState === "CALIB") {
+                document.getElementById('prog-ax0').value = (rawInputs.roll + 1) * 50;
+                document.getElementById('prog-ax1').value = (rawInputs.pitch + 1) * 50;
+                document.getElementById('prog-ax5').value = (rawInputs.yaw + 1) * 50;
+                document.getElementById('prog-ax6').value = throttlePercent;
+                
+                const btn1UI = document.getElementById('prog-btn1');
+                if(isEmergencyStopON) {
+                    btn1UI.innerText = "ON (急停中)"; btn1UI.style.color = "#ff0044";
+                } else {
+                    btn1UI.innerText = "OFF (可啟動)"; btn1UI.style.color = "#00ff88";
+                }
+            }
+            
+            if (gameState === "READY" || gameState === "PLAYING") {
+                if (!isEmergencyStopON && !engineStarted) {
+                    engineStarted = true;
+                    if(gameState === "READY") {
+                        gameState = "PLAYING";
+                        startTime = Date.now();
+                        document.getElementById('engine-warning').style.display = 'none';
+                    }
+                } else if (isEmergencyStopON && engineStarted) {
+                    engineStarted = false;
+                }
+            }
+        }
+
+        // === 物理與遊戲邏輯更新 ===
+        function updatePhysics() {
+            if (gameState !== "PLAYING" && gameState !== "READY") return;
+
+            // 1. 無人機控制
+            if (engineStarted) {
+                let effectiveThrottle = rawInputs.throttlePercent;
+                if (effectiveThrottle > 45) effectiveThrottle = 45 + (effectiveThrottle - 45) * 0.2;
+                if (engineStarted) effectiveThrottle = Math.max(20, effectiveThrottle);
+
+                let targetVy = (effectiveThrottle - 50) * 0.04; // 油門動力
+                pVel.y += (targetVy - pVel.y) * 0.1;
+
+                player.group.rotation.y -= rawInputs.yaw * 0.05;
+
+                let targetPitch = rawInputs.pitch * 0.5;
+                let targetRoll = rawInputs.roll * 0.5;
+                
+                player.group.rotation.x += (targetPitch - player.group.rotation.x) * 0.1;
+                player.group.rotation.z += (-targetRoll - player.group.rotation.z) * 0.1;
+
+                let moveDir = new THREE.Vector3(targetRoll, 0, -targetPitch);
+                moveDir.applyAxisAngle(new THREE.Vector3(0,1,0), player.group.rotation.y);
+
+                pVel.x += moveDir.x * 0.06;
+                pVel.z += moveDir.z * 0.06;
+                player.props.forEach(p => p.rotation.y += 1.5);
+            } else {
+                pVel.y -= 0.03; // 重力墜落
+                player.group.rotation.x *= 0.95;
+                player.group.rotation.z *= 0.95;
+            }
+
+            pVel.x *= 0.95; // 空氣阻力
+            pVel.z *= 0.95;
+            
+            // 預計移動位置
+            let nextPos = player.group.position.clone().add(pVel);
+
+            // 地板碰撞
+            if (nextPos.y < player.radius) {
+                nextPos.y = player.radius;
+                pVel.y = 0;
+                pVel.x *= 0.8; pVel.z *= 0.8;
+            }
+
+            // 2. 校園建築物碰撞偵測 (使用 Box3)
+            for(let box of obstacleBoxes) {
+                let closestPoint = new THREE.Vector3();
+                box.clampPoint(nextPos, closestPoint);
+                let distance = nextPos.distanceTo(closestPoint);
+                
+                if (distance < player.radius) {
+                    // 發生碰撞，計算反彈法向量
+                    let normal = nextPos.clone().sub(closestPoint).normalize();
+                    if(normal.lengthSq() === 0) normal.set(0, 1, 0);
+                    
+                    // 反彈並衰減速度
+                    pVel.reflect(normal).multiplyScalar(0.4);
+                    // 擠出障礙物
+                    nextPos.copy(closestPoint).add(normal.multiplyScalar(player.radius));
+                    shakeTime = 10;
+                }
+            }
+            
+            // 套用最終位置
+            player.group.position.copy(nextPos);
+
+            // 與 AI 碰撞
+            if (player.group.position.distanceTo(ai.group.position) < (player.radius * 2)) {
+                pVel.multiplyScalar(-1);
+                shakeTime = 15;
+            }
+
+            // 3. 50個目標框穿越判定 (不按順序)
+            let pPos = player.group.position;
+            for (let i = activeHoops.length - 1; i >= 0; i--) {
+                let hoop = activeHoops[i];
+                let V = pPos.clone().sub(hoop.mesh.position);
+                let currentDot = V.dot(hoop.normal);
+                let distToPlane = Math.abs(currentDot);
+                let radialDist = V.clone().sub(hoop.normal.clone().multiplyScalar(currentDot)).length();
+                
+                // 撞到框邊緣
+                if (distToPlane < player.radius + hoop.tube) {
+                    if (Math.abs(radialDist - hoop.radius) < player.radius + hoop.tube) {
+                        pVel.multiplyScalar(-0.3);
+                        shakeTime = 5;
+                    }
+                }
+
+                // 穿越判定
+                if (hoop.prevDot !== undefined && (currentDot * hoop.prevDot < 0)) {
+                    if (radialDist < hoop.radius) {
+                        score++;
+                        triggerFlash();
+                        // 改變外觀表示已吃掉
+                        hoop.mesh.material.color.setHex(0x10b981);
+                        hoop.mesh.material.emissive.setHex(0x000000);
+                        hoop.mesh.material.transparent = true;
+                        hoop.mesh.material.opacity = 0.2;
+                        // 從檢測陣列移除
+                        activeHoops.splice(i, 1);
+                        
+                        if(score >= totalHoops) {
+                            endGame(); // 滿分提早結束
+                        }
+                    }
+                } else {
+                    hoop.prevDot = currentDot; // 更新前一次位置狀態
+                }
+            }
+
+            // 4. AI 無人機邏輯 (限制在校園內飛)
+            let aiDir = aiTarget.clone().sub(ai.group.position);
+            if (aiDir.length() < 2) {
+                aiTarget.set(10 + Math.random()*100, 5 + Math.random()*15, 10 + Math.random()*100);
+            }
+            ai.group.position.add(aiDir.normalize().multiplyScalar(0.08));
+            ai.group.lookAt(aiTarget);
+            ai.props.forEach(p => p.rotation.y += 1.0);
+
+            // 5. 燈光狀態更新
+            let t = Date.now();
+            if (engineStarted) {
+                player.frontLight.intensity = (Math.sin(t * 0.01) > 0) ? 2 : 0;
+                player.frontLedMesh.material.color.setHex((Math.sin(t * 0.01) > 0) ? 0x0044ff : 0x001144);
+                player.rearLight.intensity = (Math.sin(t * 0.03) > 0) ? 2 : 0;
+                player.rearLedMesh.material.color.setHex((Math.sin(t * 0.03) > 0) ? 0xff0000 : 0x440000);
+            }
+            ai.frontLight.intensity = (Math.sin(t * 0.005) > 0) ? 2 : 0;
+
+            // 6. 攝影機跟隨
+            let camOffset = new THREE.Vector3(0, 3, 7);
+            camOffset.applyMatrix4(new THREE.Matrix4().makeRotationY(player.group.rotation.y));
+            let targetCamPos = player.group.position.clone().add(camOffset);
+            
+            // 攝影機防穿牆 (簡單處理)
+            if(targetCamPos.y < 1) targetCamPos.y = 1; 
+
+            if (shakeTime > 0) {
+                targetCamPos.x += (Math.random() - 0.5) * 0.5;
+                targetCamPos.y += (Math.random() - 0.5) * 0.5;
+                targetCamPos.z += (Math.random() - 0.5) * 0.5;
+                shakeTime--;
+            }
+
+            camera.position.lerp(targetCamPos, 0.15);
+            camera.lookAt(player.group.position);
+        }
+
+        // === HUD 與計時更新 ===
+        function updateHUD() {
+            if (gameState === "PLAYING") {
+                let passedStr = Math.floor((Date.now() - startTime) / 1000);
+                timeLeft = 180 - passedStr;
+                
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+
+                let min = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+                let sec = (timeLeft % 60).toString().padStart(2, '0');
+                
+                document.getElementById('hud-score').innerText = `得分: ${score} / 50`;
+                document.getElementById('hud-time').innerText = `時間: ${min}:${sec}`;
+                document.getElementById('hud-throttle').innerText = `油門: ${Math.round(rawInputs.throttlePercent)}%`;
+                document.getElementById('hud-alt').innerText = `高度: ${player.group.position.y.toFixed(1)}m`;
+            }
+        }
+
+        function endGame() {
+            timeLeft = Math.max(0, timeLeft);
+            gameState = "GAMEOVER";
+            document.getElementById('screen-gameover').style.display = 'flex';
+            if(score >= totalHoops) {
+                document.getElementById('gameover-title').innerText = "太神啦！全數通關！";
+                document.getElementById('gameover-title').style.color = "#10b981";
+            }
+            document.getElementById('final-name').innerText = "選手: " + studentName;
+            document.getElementById('final-score').innerText = "總分: " + score;
+            engineStarted = false;
+        }
+
+        // === 主迴圈 ===
+        function animate() {
+            requestAnimationFrame(animate);
+            updateInputs();
+            updatePhysics();
+            updateHUD();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>
