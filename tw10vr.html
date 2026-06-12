@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>無人機足球 - TW10 VR 沉浸式練習版</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            background: #050505;
+        }
+        .panel {
+            background: rgba(15, 15, 15, 0.95);
+            border: 2px solid #ff8800;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(255, 136, 0, 0.4);
+            max-width: 500px;
+        }
+        h1, h2 { color: #ff8800; margin-top: 0; }
+        input[type="text"] {
+            width: 80%; padding: 12px; font-size: 20px; margin: 20px 0;
+            border: 2px solid #ff8800; background: #111; color: #fff;
+            border-radius: 6px; text-align: center; outline: none;
+        }
+        button {
+            background: #ff8800; color: #000; border: none;
+            padding: 14px 32px; font-size: 20px; font-weight: bold;
+            border-radius: 6px; cursor: pointer; transition: 0.2s;
+            margin-top: 15px;
+        }
+        button:hover { background: #ffa600; box-shadow: 0 0 15px #ff8800; }
+    </style>
+</head>
+<body>
+
+    <div class="overlay" id="screen-name">
+        <div class="panel">
+            <h1>無人機足球 VR 闖關系統</h1>
+            <p style="color: #ccc;">請戴上 Vive Focus 3 頭盔並輸入選手姓名</p>
+            <input type="text" id="input-name" value="一甲國小練習生" autocomplete="off">
+            <br>
+            <button onclick="activateVRMode()">啟動 VR 沉浸模式</button>
+        </div>
+    </div>
+
+    <div class="overlay" id="screen-gameover" style="display: none;">
+        <div class="panel">
+            <h1>時間到！測驗結束</h1>
+            <h2 id="final-name">選手: </h2>
+            <h1 id="final-score" style="font-size: 48px; color: #00ff88;">總分: 0</h1>
+            <button onclick="location.reload()">再次挑戰</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // === 系統全域變數 ===
+        let studentName = "";
+        let gameState = "NAME"; // NAME, PLAYING, GAMEOVER
+        let score = 0;
+        let timeLeft = 180; 
+        let startTime = 0;
+        
+        // VR 控制器動態映射輸入源
+        let leftInputs = { yaw: 0, throttle: 0, triggerPressed: false };
+        let rightInputs = { roll: 0, pitch: 0, triggerPressed: false };
+
+        // === Three.js 核心場景初始化 ===
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x05050a);
+        
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        
+        // 🌟 重要：啟用 WebXR 功能
+        renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // VR 專用相機 Rig 基座（包覆相機與控制器，用來動態在世界座標中平移轉向）
+        const cameraRig = new THREE.Group();
+        scene.add(cameraRig);
+        cameraRig.add(camera);
+
+        // 燈光系統
+        const ambientLight = new THREE.AmbientLight(0x404040, 2.0);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(10, 30, 10);
+        scene.add(dirLight);
+
+        // 地面輔助網格
+        const gridHelper = new THREE.GridHelper(300, 150, 0xff8800, 0x331100);
+        scene.add(gridHelper);
+
+        const obstacles = [];
+        let nameWalls = [];
+        let activeHoop = null;
+
+        // === 建立 3D VR 專用虛擬 HUD 面板 (懸浮於視線前方) ===
+        const hudCanvas = document.createElement('canvas');
+        hudCanvas.width = 512;
+        hudCanvas.height = 128;
+        const hudCtx = hudCanvas.getContext('2d');
+        const hudTexture = new THREE.CanvasTexture(hudCanvas);
+        const hudMat = new THREE.MeshBasicMaterial({ map: hudTexture, transparent: true, side: THREE.DoubleSide });
+        const hudGeo = new THREE.PlaneGeometry(1.2, 0.3);
+        const hudMesh = new THREE.Mesh(hudGeo, hudMat);
+        
+        // 固定配置在 VR 相機前方 1.5 公尺，偏下方以防遮擋主視野
+        hudMesh.position.set(0, -0.3, -1.5);
+        cameraRig.add(hudMesh);
+
+        // === 無人機生成機制 ===
+        function createDrone(isPlayer) {
+            const group = new THREE.Group();
+            const radius = 0.6;
+
+            const coreGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.1, 16);
+            const coreMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+            const core = new THREE.Mesh(coreGeo, coreMat);
+            group.add(core);
+
+            const cageMat = new THREE.MeshStandardMaterial({
+                color: isPlayer ? 0xff5500 : 0x666666,
+                wireframe: true,
+                transparent: true, opacity: 0.7
+            });
+            const cageGeo = new THREE.IcosahedronGeometry(radius, 1);
+            const cage = new THREE.Mesh(cageGeo, cageMat);
+            group.add(cage);
+
+            const ringMat = new THREE.MeshStandardMaterial({ color: isPlayer ? 0xffffff : 0x888888 });
+            const ringGeo = new THREE.TorusGeometry(radius, 0.015, 8, 32);
+            const ringX = new THREE.Mesh(ringGeo, ringMat); ringX.rotation.y = Math.PI/2;
+            const ringY = new THREE.Mesh(ringGeo, ringMat); ringY.rotation.x = Math.PI/2;
+            const ringZ = new THREE.Mesh(ringGeo, ringMat);
+            group.add(ringX, ringY, ringZ);
+
+            const props = [];
+            const propGeo = new THREE.BoxGeometry(0.28, 0.01, 0.04);
+            const propMat = new THREE.MeshBasicMaterial({ color: 0xcccccc });
+            for(let i=0; i<4; i++) {
+                const prop = new THREE.Mesh(propGeo, propMat);
+                prop.position.set((i%2===0?1:-1)*0.24, 0.04, (i<2?1:-1)*0.24);
+                group.add(prop);
+                props.push(prop);
+            }
+
+            const fColor = isPlayer ? 0x0066ff : 0x00ff66;
+            const frontLight = new THREE.PointLight(fColor, 2, 3);
+            frontLight.position.set(0, 0, -radius);
+            group.add(frontLight);
+
+            return { group, props, radius };
+        }
+
+        const player = createDrone(true);
+        player.group.position.set(0, 1.5, 0);
+        let pVel = new THREE.Vector3();
+        scene.add(player.group);
+
+        const ai = createDrone(false);
+        ai.group.position.set(12, 4, -12);
+        let aiTarget = new THREE.Vector3();
+        scene.add(ai.group);
+
+        // === 產生隨機幾何障礙物 ===
+        function spawnObstacles() {
+            const geos = [new THREE.BoxGeometry(2,2,2), new THREE.SphereGeometry(1.5, 12, 12), new THREE.ConeGeometry(1.2, 2.5, 12)];
+            const colors = [0x00eeee, 0xee00ee, 0x00ee00, 0xaa00ff];
+            for(let i=0; i<35; i++) {
+                const geo = geos[Math.floor(Math.random() * geos.length)];
+                const mat = new THREE.MeshStandardMaterial({ color: colors[Math.floor(Math.random() * colors.length)], roughness: 0.4 });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set((Math.random() - 0.5) * 90, Math.random() * 18 + 2, (Math.random() - 0.5) * 90);
+                mesh.geometry.computeBoundingSphere();
+                mesh.userData.radius = mesh.geometry.boundingSphere.radius;
+                scene.add(mesh);
+                obstacles.push(mesh);
+            }
+        }
+        spawnObstacles();
+
+        // 巨型沉浸式姓名圍牆
+        function updateNameWalls(name) {
+            nameWalls.forEach(w => scene.remove(w));
+            nameWalls = [];
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ff8800';
+            ctx.font = "bold 90px 'Segoe UI', Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(name, 512, 128);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const wallMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false });
+            const wallGeo = new THREE.PlaneGeometry(120, 30);
+            const positions = [
+                { pos: [0, 12, -60], rot: [0, 0, 0] },
+                { pos: [0, 12, 60], rot: [0, Math.PI, 0] },
+                { pos: [-60, 12, 0], rot: [0, Math.PI/2, 0] },
+                { pos: [60, 12, 0], rot: [0, -Math.PI/2, 0] }
+            ];
+            positions.forEach(p => {
+                const wall = new THREE.Mesh(wallGeo, wallMat);
+                wall.position.set(...p.pos); wall.rotation.set(...p.rot);
+                scene.add(wall); nameWalls.push(wall);
+            });
+        }
+
+        // 建立穿越目標框
+        function createHoop() {
+            const r = 2.4; const tube = 0.18;
+            const geo = new THREE.TorusGeometry(r, tube, 12, 24);
+            const mat = new THREE.MeshStandardMaterial({ color: 0xff0055, metalness: 0.6 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set((Math.random() - 0.5) * 50, Math.random() * 12 + 3, (Math.random() - 0.5) * 50 - 5);
+            mesh.rotation.y = (Math.random() - 0.5) * Math.PI;
+            scene.add(mesh);
+            const normal = new THREE.Vector3(0, 0, 1).applyEuler(mesh.rotation).normalize();
+            return { mesh, radius: r, tube, normal, prevDot: undefined };
+        }
+        activeHoop = createHoop();
+
+        // === VR 虛擬控制器射線指示器生成 ===
+        function setupVRControllers() {
+            const laserGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-2)]);
+            const laserMat = new THREE.LineBasicMaterial({ color: 0xff8800 });
+            
+            for(let i=0; i<2; i++) {
+                const controller = renderer.xr.getController(i);
+                const line = new THREE.Line(laserGeo, laserMat);
+                controller.add(line);
+                cameraRig.add(controller);
+            }
+        }
+        setupVRControllers();
+
+        // === VR 流程切換核心控制 ===
+        function activateVRMode() {
+            studentName = document.getElementById('input-name').value.trim() || "一甲國小練習生";
+            updateNameWalls(studentName);
+            
+            if (navigator.xr) {
+                navigator.xr.requestSession('immersive-vr', { requiredFeatures: ['local-floor'] })
+                .then((session) => {
+                    renderer.xr.setSession(session);
+                    document.getElementById('screen-name').style.display = 'none';
+                    gameState = "PLAYING";
+                    startTime = Date.now();
+
+                    // 自動初始化定位
+                    setTimeout(() => { resetCameraBehindDrone(); }, 500);
+
+                    session.addEventListener('end', () => {
+                        gameState = "GAMEOVER";
+                        document.getElementById('screen-gameover').style.display = 'flex';
+                        document.getElementById('final-name').innerText = "選手: " + studentName;
+                        document.getElementById('final-score').innerText = "總分: " + score;
+                    });
+                }).catch(err => alert("WebXR 啟動失敗: " + err.message));
+            } else {
+                alert("此裝置或環境不支援 WebXR VR 模式");
+            }
+        }
+
+        // 立即定位至無人機正後方
+        function resetCameraBehindDrone() {
+            let camOffset = new THREE.Vector3(0, 1.8, 4.8); 
+            camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.group.rotation.y);
+            cameraRig.position.copy(player.group.position).add(camOffset);
+        }
+
+        // === 精準獲取 Vive Focus 3 搖桿數據與按鈕狀態 ===
+        function updateVRInputs() {
+            // 預設重置狀態
+            leftInputs.yaw = 0; leftInputs.throttle = 0; leftInputs.triggerPressed = false;
+            rightInputs.roll = 0; rightInputs.pitch = 0; rightInputs.triggerPressed = false;
+
+            const session = renderer.xr.getSession();
+            if (!session) return;
+
+            const inputSources = session.inputSources;
+            for (let i = 0; i < inputSources.length; i++) {
+                const source = inputSources[i];
+                if (source.gamepad) {
+                    const axes = source.gamepad.axes;
+                    const buttons = source.gamepad.buttons;
+                    
+                    // 相容 Vive 標準 xr-standard 對應 (4軸架構下 2,3 為 Thumbstick)
+                    let stickX = axes.length > 2 ? axes[2] : axes[0];
+                    let stickY = axes.length > 2 ? axes[3] : axes[1];
+                    let trigger = buttons[0] ? buttons[0].pressed : false;
+
+                    if (source.handedness === 'left') {
+                        leftInputs.yaw = stickX;         // 左搖桿左右 -> 旋轉 (Yaw)
+                        leftInputs.throttle = -stickY;   // 左搖桿前後 -> 上升下降 (Throttle 緩速優化)
+                        leftInputs.triggerPressed = trigger;
+                        
+                        // 左手扳機：瞬移回正
+                        if (trigger) { resetCameraBehindDrone(); }
+                    } 
+                    else if (source.handedness === 'right') {
+                        rightInputs.roll = stickX;       // 右搖桿左右 -> 平移 Roll
+                        rightInputs.pitch = -stickY;     // 右搖桿前後 -> 平移 Pitch
+                        rightInputs.triggerPressed = trigger;
+                        
+                        // 右手扳機：退出沉浸 VR 模式
+                        if (trigger) { session.end(); }
+                    }
+                }
+            }
+        }
+
+        // === 物理更新與極致抗暈追蹤矩陣 ===
+        function updatePhysics() {
+            if (gameState !== "PLAYING") return;
+
+            // 1. 無人機動力學 (為 VR 優化之線性滑順手感，降低極限角速度)
+            let targetVy = leftInputs.throttle * 0.12; 
+            pVel.y += (targetVy - pVel.y) * 0.05; // 緩和高度阻尼
+
+            player.group.rotation.y -= leftInputs.yaw * 0.025; // 緩和自旋速
+
+            let targetPitch = rightInputs.pitch * 0.25; 
+            let targetRoll = rightInputs.roll * 0.25;
+            player.group.rotation.x += (targetPitch - player.group.rotation.x) * 0.1;
+            player.group.rotation.z += (-targetRoll - player.group.rotation.z) * 0.1;
+
+            let moveDir = new THREE.Vector3(rightInputs.roll * 0.08, 0, -rightInputs.pitch * 0.08);
+            moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.group.rotation.y);
+            pVel.x += moveDir.x * 0.25;
+            pVel.z += moveDir.z * 0.25;
+
+            pVel.x *= 0.93; pVel.z *= 0.93; // 空氣摩擦阻尼
+            player.group.position.add(pVel);
+
+            // 地面安全邊界
+            if (player.group.position.y < player.radius) {
+                player.group.position.y = player.radius;
+                pVel.y = 0;
+            }
+
+            // 2. 障礙與邊界碰撞
+            let pPos = player.group.position;
+            for(let obs of obstacles) {
+                if (pPos.distanceTo(obs.position) < (player.radius + obs.userData.radius)) {
+                    pVel.multiplyScalar(-0.5); pPos.add(pVel);
+                }
+            }
+
+            // 3. 穿越框偵測
+            if (activeHoop) {
+                let V = pPos.clone().sub(activeHoop.mesh.position);
+                let currentDot = V.dot(activeHoop.normal);
+                let distToPlane = Math.abs(currentDot);
+                let radialDist = V.clone().sub(activeHoop.normal.clone().multiplyScalar(currentDot)).length();
+                
+                if (distToPlane < player.radius + activeHoop.tube) {
+                    if (Math.abs(radialDist - activeHoop.radius) < player.radius + activeHoop.tube) {
+                        pVel.multiplyScalar(-0.4);
+                    }
+                }
+                if (activeHoop.prevDot !== undefined && (currentDot * activeHoop.prevDot < 0)) {
+                    if (radialDist < activeHoop.radius) {
+                        score++;
+                        scene.remove(activeHoop.mesh);
+                        activeHoop = createHoop();
+                    }
+                }
+                activeHoop.prevDot = currentDot;
+            }
+
+            // 4. AI 簡單路徑
+            let aiDir = aiTarget.clone().sub(ai.group.position);
+            if (aiDir.length() < 2) {
+                aiTarget.set((Math.random()-0.5)*40, Math.random()*10+4, (Math.random()-0.5)*40);
+            }
+            ai.group.position.add(aiDir.normalize().multiplyScalar(0.04));
+            ai.group.lookAt(aiTarget);
+            player.props.forEach(p => p.rotation.y += 1.2);
+            ai.props.forEach(p => p.rotation.y += 0.8);
+
+            // 5. 核心防暈追蹤策略
+            let rightActive = (Math.abs(rightInputs.roll) > 0.05 || Math.abs(rightInputs.pitch) > 0.05);
+            let leftVerticalActive = (Math.abs(leftInputs.throttle) > 0.05);
+            let leftHorizontalActive = (Math.abs(leftInputs.yaw) > 0.05);
+
+            let camOffset = new THREE.Vector3(0, 1.8, 4.8);
+            camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.group.rotation.y);
+            let targetCamPos = player.group.position.clone().add(camOffset);
+
+            if (rightActive) {
+                // 🛑 右搖桿操作時：相機完全定點靜止不進行動態追蹤，避免內耳視覺不對稱導致頭暈
+            } 
+            else if (leftVerticalActive) {
+                // ☁️ 上升下降：極緩慢跟隨位移，過濾劇烈晃動
+                cameraRig.position.x = THREE.MathUtils.lerp(cameraRig.position.x, targetCamPos.x, 0.015);
+                cameraRig.position.y = THREE.MathUtils.lerp(cameraRig.position.y, targetCamPos.y, 0.015);
+                cameraRig.position.z = THREE.MathUtils.lerp(cameraRig.position.z, targetCamPos.z, 0.015);
+            } 
+            else if (leftHorizontalActive) {
+                // 🔄 左旋右旋：正常速率插值跟隨旋轉軌道
+                cameraRig.position.lerp(targetCamPos, 0.08);
+            } 
+            else {
+                // 無任何操作時：溫和將視角回歸標準位置
+                cameraRig.position.lerp(targetCamPos, 0.03);
+            }
+
+            // 🔒 視線鎖定：Rig 基座保持水平朝向無人機，絕對禁止 Z 軸與傾斜旋轉
+            let lookTarget = player.group.position.clone();
+            cameraRig.lookAt(lookTarget);
+        }
+
+        // === 3D VR HUD 重新整理動態貼圖 ===
+        function updateVRHUD() {
+            let min = "03", sec = "00";
+            if (gameState === "PLAYING") {
+                let passedStr = Math.floor((Date.now() - startTime) / 1000);
+                timeLeft = 180 - passedStr;
+                
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    renderer.xr.getSession()?.end(); // 自動結束退出 VR
+                }
+                min = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+                sec = (timeLeft % 60).toString().padStart(2, '0');
+            }
+
+            // 繪製面板
+            hudCtx.clearRect(0, 0, 512, 128);
+            hudCtx.fillStyle = 'rgba(10, 10, 15, 0.85)';
+            hudCtx.fillRect(0, 0, 512, 128);
+            hudCtx.strokeStyle = '#ff8800';
+            hudCtx.lineWidth = 4;
+            hudCtx.strokeRect(0, 0, 512, 128);
+            
+            hudCtx.fillStyle = '#ff8800';
+            hudCtx.font = "bold 24px 'Segoe UI', Arial";
+            hudCtx.fillText(`選手: ${studentName}`, 25, 45);
+            hudCtx.fillText(`得分: ${score} 分`, 25, 95);
+            
+            hudCtx.fillStyle = '#00ffaa';
+            hudCtx.fillText(`時間: ${min}:${sec}`, 280, 45);
+            hudCtx.fillStyle = '#00aaff';
+            hudCtx.fillText(`高度: ${player.group.position.y.toFixed(1)}m`, 280, 95);
+            
+            hudTexture.needsUpdate = true;
+        }
+
+        // === VR 主迴圈 ===
+        renderer.setAnimationLoop(() => {
+            updateVRInputs();
+            updatePhysics();
+            updateVRHUD();
+            renderer.render(scene, camera);
+        });
+
+        // 視窗自適應
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
